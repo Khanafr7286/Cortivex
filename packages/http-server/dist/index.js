@@ -59,16 +59,45 @@ app.use((req, _res, next) => {
 // Pipeline endpoints
 app.use('/api/pipeline', pipelineRoutes);
 // List pipelines (convenience alias)
-app.get('/api/pipelines', async (_req, res) => {
+app.get('/api/pipelines', async (req, res) => {
     try {
         const { PipelineLoader } = await import('@cortivex/core');
         const loader = new PipelineLoader(process.cwd());
-        const pipelines = await loader.listPipelines();
-        res.json(pipelines);
+        // If ?full=true, return complete pipeline definitions with nodes
+        if (req.query.full === 'true') {
+            const list = await loader.listPipelines();
+            const full = [];
+            for (const p of list) {
+                try {
+                    const def = await loader.load(p.name);
+                    full.push(def);
+                }
+                catch {
+                    // Skip pipelines that fail to load
+                }
+            }
+            res.json(full);
+        }
+        else {
+            const pipelines = await loader.listPipelines();
+            res.json(pipelines);
+        }
     }
     catch (err) {
         console.error('Failed to list pipelines:', err instanceof Error ? err.message : err);
         res.json([]);
+    }
+});
+// GET /api/pipelines/:name — full pipeline definition
+app.get('/api/pipelines/:name', async (req, res) => {
+    try {
+        const { PipelineLoader } = await import('@cortivex/core');
+        const loader = new PipelineLoader(process.cwd());
+        const pipeline = await loader.load(req.params.name);
+        res.json(pipeline);
+    }
+    catch (err) {
+        res.status(404).json({ error: `Pipeline "${req.params.name}" not found` });
     }
 });
 // Mesh endpoints

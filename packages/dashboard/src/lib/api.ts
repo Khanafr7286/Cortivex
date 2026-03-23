@@ -47,7 +47,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 // ============================================
 
 export async function fetchPipelines(): Promise<PipelineDefinition[]> {
-  return request<PipelineDefinition[]>('/pipelines');
+  return request<PipelineDefinition[]>('/pipelines?full=true');
 }
 
 export async function fetchPipeline(name: string): Promise<PipelineDefinition> {

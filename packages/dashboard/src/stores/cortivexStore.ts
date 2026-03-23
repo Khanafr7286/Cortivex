@@ -21,6 +21,7 @@ import {
   demoMeshConflicts,
   demoSuggestions,
   createLiveExecution,
+  nodeTypeCatalog,
 } from '@/lib/demo-data';
 import {
   fetchPipelines as apiFetchPipelines,
@@ -178,6 +179,61 @@ export const useCortivexStore = create<CortivexState>((set, get) => ({
       });
     }
 
+    // Normalize API pipeline data (core NodeDefinition → dashboard PipelineNode)
+    function normalizePipelines(raw: PipelineDefinition[]): PipelineDefinition[] {
+      const nodeTypeMap = new Map(nodeTypeCatalog.map((n) => [n.id, n]));
+      return raw.map((p) => {
+        const rec = p as unknown as Record<string, unknown>;
+        const rawNodes = (rec['nodes'] as Array<Record<string, unknown>>) ?? [];
+        const nodes: PipelineNode[] = rawNodes.map((n, idx) => {
+          const typeId = (n['type'] as string) ?? (n['typeId'] as string) ?? 'unknown';
+          const meta = nodeTypeMap.get(typeId.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase());
+          return {
+            id: (n['id'] as string) ?? `node-${idx}`,
+            typeId,
+            name: meta?.name ?? typeId,
+            category: meta?.category ?? ('analysis' as PipelineNode['category']),
+            icon: meta?.icon ?? 'cpu',
+            position: { x: 150 + idx * 280, y: 120 + (idx % 2) * 160 },
+            model: (n['model'] as string) ?? meta?.defaultModel ?? 'claude-sonnet-4-20250514',
+            temperature: 0,
+            instructions: (n['instructions'] as string) ?? '',
+            dependsOn: (n['depends_on'] as string[]) ?? (n['dependsOn'] as string[]) ?? [],
+            condition: (n['condition'] as string) ?? '',
+            status: 'idle' as PipelineNode['status'],
+            progress: 0,
+            output: '',
+            duration: 0,
+            cost: 0,
+            tokensUsed: 0,
+            filesModified: [],
+          };
+        });
+
+        // Generate connections from dependsOn
+        const connections: PipelineConnection[] = [];
+        for (const node of nodes) {
+          for (const dep of node.dependsOn) {
+            connections.push({
+              id: `${dep}->${node.id}`,
+              sourceId: dep,
+              targetId: node.id,
+              animated: false,
+            });
+          }
+        }
+
+        return {
+          name: p.name ?? (rec['name'] as string) ?? 'untitled',
+          description: p.description ?? (rec['description'] as string) ?? '',
+          nodes,
+          connections: p.connections?.length ? p.connections : connections,
+          createdAt: p.createdAt ?? new Date().toISOString(),
+          updatedAt: p.updatedAt ?? new Date().toISOString(),
+        };
+      });
+    }
+
     if (serverOnline) {
       // Fetch all endpoints in parallel
       [pipelines, meshClaims, meshConflicts, insights, history] =
@@ -188,6 +244,7 @@ export const useCortivexStore = create<CortivexState>((set, get) => ({
           apiFetchInsights().catch(() => [] as Insight[]),
           apiFetchHistory().catch(() => [] as ExecutionRecord[]),
         ]);
+      pipelines = normalizePipelines(pipelines);
       history = normalizeHistory(history);
     } else {
       console.warn('[Cortivex] HTTP server offline — using template pipelines, empty live state');
