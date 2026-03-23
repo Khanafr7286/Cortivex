@@ -206,30 +206,54 @@ export function MeshView() {
   const [panelOpen, setPanelOpen] = useState(true);
   const bootstrappedRef = useRef(false);
 
-  // Populate agents from store mesh events (swarm:bootstrap provides agent list)
+  // Populate agents from ANY mesh events (not just BOOTSTRAP)
   useEffect(() => {
-    if (bootstrappedRef.current) return;
+    if (storeMeshEvents.length === 0) return;
 
-    // Check if store has BOOTSTRAP events with agent data
-    const bootstrapEvent = storeMeshEvents.find((e) => e.type === 'BOOTSTRAP');
-    if (bootstrapEvent) {
-      // Bootstrap detected from store — use DEFAULT_AGENTS as the agent list
-      bootstrappedRef.current = true;
-      setAgents(DEFAULT_AGENTS);
-
-      // Convert store mesh events into local SimEvents for the event panel
-      const simEvents: SimEvent[] = storeMeshEvents.map((e) => ({
-        id: e.id,
-        type: e.type,
-        agent: e.agentName,
-        details: e.details,
-        timestamp: e.timestamp,
-      }));
-      setEvents(simEvents);
+    // Extract unique agent names from all events
+    const agentNames = new Set<string>();
+    for (const e of storeMeshEvents) {
+      if (e.agentName && e.agentName !== 'System' && e.agentName !== 'Monitor') {
+        agentNames.add(e.agentName);
+      }
     }
-  }, [storeMeshEvents]);
 
-  // No fallback — agents are only populated from WebSocket swarm events
+    if (agentNames.size > 0 && !bootstrappedRef.current) {
+      bootstrappedRef.current = true;
+
+      // Build agents from event data
+      const discovered: SimAgent[] = Array.from(agentNames).map((name) => {
+        // Find the latest event for this agent to get role/token info
+        const latest = storeMeshEvents.find((e) => e.agentName === name);
+        const details = latest?.details ?? '';
+        const isLeader = details.toLowerCase().includes('leader');
+        const isDead = details.toLowerCase().includes('died') || details.toLowerCase().includes('dead');
+        const tokenMatch = details.match(/([\d.]+)K?\s*tokens/i);
+        const tokens = tokenMatch ? parseFloat(tokenMatch[1]) * (details.includes('K') ? 1000 : 1) : 0;
+
+        return {
+          id: name.toLowerCase().replace(/[^a-z0-9]/g, '-'),
+          name,
+          role: isDead ? 'dead' as const : isLeader ? 'leader' as const : 'follower' as const,
+          status: 'idle' as const,
+          tokensUsed: tokens,
+          health: isDead ? 0 : 1,
+        };
+      });
+
+      setAgents(discovered);
+    }
+
+    // Always sync events to the panel
+    const simEvents: SimEvent[] = storeMeshEvents.map((e) => ({
+      id: e.id,
+      type: e.type,
+      agent: e.agentName,
+      details: e.details,
+      timestamp: e.timestamp,
+    }));
+    setEvents(simEvents);
+  }, [storeMeshEvents]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
