@@ -33,7 +33,7 @@ const pageTransition = {
 };
 
 export default function App() {
-  const { activeView, setConnected } = useCortivexStore();
+  const { activeView, setConnected, isLoading, fetchInitialData } = useCortivexStore();
 
   const handleWSEvent = useCallback(
     (event: WSEvent) => {
@@ -75,7 +75,7 @@ export default function App() {
         const nodeId = d.nodeId as string;
         if (nodeId) {
           const nodes = store.activeRun.nodes.map((n) =>
-            n.id === nodeId ? { ...n, status: 'completed' as NodeStatus, progress: 100, duration: (d.duration as number) || 0, cost: (d.cost as number) || 0, tokensUsed: (d.tokens as number) || 0 } : n,
+            n.id === nodeId ? { ...n, status: 'completed' as NodeStatus, progress: 100, duration: (d.duration as number) || 0, cost: (d.cost as number) || 0, tokensUsed: (d.tokens as number) || 0, filesModified: (d.filesModified as string[]) || [] } : n,
           );
           const totalCost = nodes.reduce((s, n) => s + n.cost, 0);
           const totalTokens = nodes.reduce((s, n) => s + n.tokensUsed, 0);
@@ -169,7 +169,25 @@ export default function App() {
     setConnected(isConnected);
   }, [isConnected, setConnected]);
 
+  // Fetch real data from API on mount
+  useEffect(() => {
+    fetchInitialData();
+  }, [fetchInitialData]);
+
   const ActiveView = viewComponents[activeView];
+
+  if (isLoading) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-black/90">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-10 h-10 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+          <span className="text-sm text-cyan-400/80 font-mono tracking-wide">
+            Loading Cortivex data...
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <TooltipProvider delayDuration={300}>

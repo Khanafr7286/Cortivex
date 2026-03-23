@@ -99,6 +99,7 @@ function makeNode(
     duration: 0,
     cost: 0,
     tokensUsed: 0,
+    filesModified: [],
     ...overrides,
   };
 }
@@ -726,7 +727,7 @@ export const demoSuggestions: Suggestion[] = [
 interface SimCallbacks {
   onNodeStart: (nodeId: string) => void;
   onNodeProgress: (nodeId: string, progress: number, line?: { type: string; text: string }) => void;
-  onNodeComplete: (nodeId: string, result: { duration: number; cost: number; tokens: number }) => void;
+  onNodeComplete: (nodeId: string, result: { duration: number; cost: number; tokens: number; filesModified: string[] }) => void;
   onPipelineComplete: () => void;
 }
 
@@ -1031,10 +1032,24 @@ export function createLiveExecution(
         const baseCost = nt?.avgCost ?? 0.5;
         const baseDuration = nt?.avgRuntime ?? 120;
 
+        // Generate realistic filesModified based on node type
+        const simFileMap: Record<string, string[]> = {
+          'lint-fixer': ['src/auth/login.ts', 'src/utils/helpers.ts'],
+          'type-checker': ['src/api/routes.ts'],
+          'code-reviewer': ['REVIEW.md'],
+          'test-generator': ['tests/auth.test.ts', 'tests/routes.test.ts'],
+          'doc-generator': ['docs/API.md', 'README.md'],
+          'changelog-writer': ['CHANGELOG.md'],
+          'security-scanner': ['SECURITY_REPORT.md'],
+          'secret-detector': [],
+        };
+        const filesModified = simFileMap[node.typeId] || [`output/${node.typeId}.json`];
+
         callbacks.onNodeComplete(nodeId, {
           duration: baseDuration * (0.8 + Math.random() * 0.4),
           cost: baseCost * (0.9 + Math.random() * 0.2),
           tokens: Math.round(baseCost * 15000 + Math.random() * 5000),
+          filesModified,
         });
 
         currentIndex++;

@@ -168,6 +168,19 @@ export function TimelineView() {
       {/* Timeline */}
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-3xl mx-auto">
+          {history.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-20 text-center">
+              <div className="w-14 h-14 rounded-2xl bg-cortivex-cyan/10 flex items-center justify-center mx-auto mb-4">
+                <Clock size={24} className="text-cortivex-cyan" />
+              </div>
+              <h3 className="text-sm font-semibold text-text-primary mb-2">
+                No execution history yet
+              </h3>
+              <p className="text-xs text-text-muted">
+                Run a pipeline to see results.
+              </p>
+            </div>
+          )}
           {Object.entries(grouped).map(([date, records]) => (
             <div key={date} className="mb-8">
               {/* Date separator */}

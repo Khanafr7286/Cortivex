@@ -14,7 +14,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "node --test dist/**/*.test.js"
+    "test": "vitest run"
   },
   "dependencies": {
     "yaml": "^2.5.0",

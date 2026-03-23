@@ -344,8 +344,8 @@ export class HistoryRecorder {
       } catch {
         // No go.mod
       }
-    } catch {
-      // Ignore all detection errors
+    } catch (error) {
+      console.error('Failed to detect repo context:', error instanceof Error ? error.message : error);
     }
 
     if (context.languages.length === 0) {

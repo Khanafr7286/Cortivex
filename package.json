@@ -8,11 +8,13 @@
   "bin": {
     "cortivex": "./packages/cli/dist/index.js"
   },
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "build": "npm run build --workspaces",
     "dev": "npm run dev --workspace=packages/dashboard",
-    "test": "npm run test --workspaces --if-present",
+    "test": "vitest run",
     "postinstall": "npm run build --workspaces --if-present 2>/dev/null || true",
     "install-skills": "node scripts/install-skills.js"
   },
@@ -55,5 +57,10 @@
   ],
   "author": "Ahmed Raoofuddin",
   "license": "MIT",
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
+  }
 }

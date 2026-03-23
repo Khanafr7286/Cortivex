@@ -303,6 +303,7 @@ export function PipelineEditorView() {
         duration: 0,
         cost: 0,
         tokensUsed: 0,
+        filesModified: [],
       };
 
       addEditorNode(newNode);

@@ -57,6 +57,7 @@ router.post('/run', async (req, res) => {
     try {
       pipelineDef = await loader.load(pipeline);
     } catch {
+      // Pipeline not found by name — try parsing as inline YAML/JSON
       try {
         pipelineDef = loader.loadFromString(pipeline);
       } catch (parseErr) {
@@ -156,8 +157,9 @@ router.post('/create', async (req, res) => {
     let savedPath: string | undefined;
     try {
       savedPath = await store.save(pipelineDef);
-    } catch {
-      // Non-fatal — pipeline was still generated
+    } catch (err) {
+      // Non-fatal — pipeline was still generated, but log so operators notice persistence failures
+      console.error('Failed to save pipeline to disk:', err instanceof Error ? err.message : err);
     }
 
     res.json({
@@ -262,6 +264,7 @@ router.post('/export/n8n', async (req, res) => {
     try {
       pipelineDef = await loader.load(pipeline);
     } catch {
+      // Pipeline not found by name — try parsing as inline YAML/JSON
       try {
         pipelineDef = loader.loadFromString(pipeline);
       } catch {

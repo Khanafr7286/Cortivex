@@ -17,7 +17,7 @@ export function StatusBar() {
       const today = new Date();
       return d.toDateString() === today.toDateString();
     })
-    .reduce((sum, r) => sum + r.cost, 0) || 12.47; // fallback demo value
+    .reduce((sum, r) => sum + r.cost, 0);
 
   const runStatus = activeRun
     ? activeRun.status === 'running'

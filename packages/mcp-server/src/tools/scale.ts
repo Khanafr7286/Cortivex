@@ -1,7 +1,11 @@
 /**
- * cortivex_scale — Adjust the agent pool size for pipeline execution.
+ * cortivex_scale — Report and configure agent pool sizing for pipeline execution.
+ *
+ * The pool size is a configuration value stored in .cortivex/config.json.
+ * The PipelineExecutor reads this at runtime to determine max parallelism.
  */
-import { PipelineExecutor } from '@cortivex/core';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 
 export interface ScaleInput {
   poolSize: number;
@@ -36,9 +40,34 @@ export async function scaleTool(input: ScaleInput): Promise<{ content: Array<{ t
     };
   }
 
-  const executor = new PipelineExecutor();
-  const previous = await executor.getPoolSize(input.nodeType);
-  await executor.setPoolSize(input.poolSize, input.nodeType);
+  // Read current config
+  const configDir = join(process.cwd(), '.cortivex');
+  const configPath = join(configDir, 'config.json');
+
+  let config: Record<string, unknown> = {};
+  try {
+    const raw = await readFile(configPath, 'utf-8');
+    config = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    // Config doesn't exist yet
+  }
+
+  const poolConfig = (config['pool'] as Record<string, unknown>) ?? {};
+  const previous = input.nodeType
+    ? (poolConfig[input.nodeType] as number) ?? (poolConfig['default'] as number) ?? 4
+    : (poolConfig['default'] as number) ?? 4;
+
+  // Update config
+  if (input.nodeType) {
+    poolConfig[input.nodeType] = input.poolSize;
+  } else {
+    poolConfig['default'] = input.poolSize;
+  }
+  config['pool'] = poolConfig;
+
+  // Write config
+  await mkdir(configDir, { recursive: true });
+  await writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
 
   const scope = input.nodeType ? ` for node type "${input.nodeType}"` : ' (global)';
 
@@ -50,7 +79,7 @@ export async function scaleTool(input: ScaleInput): Promise<{ content: Array<{ t
         `  Previous: ${previous}`,
         `  New: ${input.poolSize}`,
         ``,
-        `This affects the maximum number of concurrent agents${input.nodeType ? ` of type "${input.nodeType}"` : ''} during pipeline execution.`,
+        `Saved to .cortivex/config.json. Takes effect on next pipeline run.`,
       ].join('\n'),
     }],
   };

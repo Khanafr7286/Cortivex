@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import * as d3 from 'd3';
 import { Search, X, ZoomIn, ZoomOut, Maximize2, Filter } from 'lucide-react';
+import { useCortivexStore } from '@/stores/cortivexStore';
+import { fetchHistory as apiFetchHistory } from '@/lib/api';
 
 // ============================================
 // CORTIVEX KNOWLEDGE GRAPH VIEW
@@ -212,6 +214,94 @@ interface SimLink extends d3.SimulationLinkDatum<SimNode> {
   weight: number;
 }
 
+/* --- build graph from real execution history --- */
+function buildGraphFromHistory(
+  history: { pipelineName: string; nodesRun: number; success: boolean; cost: number; tokensUsed: number; duration: number; runNumber: number }[],
+): { nodes: KnowledgeNode[]; edges: KnowledgeEdge[] } | null {
+  if (history.length === 0) return null;
+
+  const nodes: KnowledgeNode[] = [];
+  const edges: KnowledgeEdge[] = [];
+  const nodeIds = new Set<string>();
+
+  // Create nodes from unique pipeline names
+  const pipelineNames = [...new Set(history.map((r) => r.pipelineName))];
+  for (const name of pipelineNames) {
+    const id = `pipeline-${name}`;
+    if (!nodeIds.has(id)) {
+      nodeIds.add(id);
+      const runs = history.filter((r) => r.pipelineName === name);
+      const successRate = ((runs.filter((r) => r.success).length / runs.length) * 100).toFixed(0);
+      const totalCost = runs.reduce((s, r) => s + r.cost, 0);
+      nodes.push({
+        id,
+        label: name,
+        type: 'pattern',
+        properties: {
+          runs: String(runs.length),
+          successRate: `${successRate}%`,
+          totalCost: `$${totalCost.toFixed(2)}`,
+        },
+        discoveredBy: 'ExecutionHistory',
+      });
+    }
+  }
+
+  // Create insight nodes from aggregated stats
+  const totalRuns = history.length;
+  const successCount = history.filter((r) => r.success).length;
+  const avgCost = history.reduce((s, r) => s + r.cost, 0) / totalRuns;
+
+  const insightId = 'insight-overall';
+  nodeIds.add(insightId);
+  nodes.push({
+    id: insightId,
+    label: `${successCount}/${totalRuns} success`,
+    type: 'insight',
+    properties: {
+      avgCost: `$${avgCost.toFixed(2)}`,
+      totalRuns: String(totalRuns),
+    },
+    discoveredBy: 'LearningEngine',
+  });
+
+  // Connect pipelines to the insight node
+  for (const name of pipelineNames) {
+    edges.push({
+      id: `edge-${name}-insight`,
+      source: `pipeline-${name}`,
+      target: insightId,
+      relation: 'contributes_to',
+      weight: 0.5,
+    });
+  }
+
+  // Create dependency edges between pipelines that ran in sequence (by runNumber proximity)
+  if (pipelineNames.length > 1) {
+    const sorted = [...history].sort((a, b) => a.runNumber - b.runNumber);
+    const seenPairs = new Set<string>();
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1];
+      const curr = sorted[i];
+      if (prev.pipelineName !== curr.pipelineName) {
+        const pairKey = `${prev.pipelineName}::${curr.pipelineName}`;
+        if (!seenPairs.has(pairKey)) {
+          seenPairs.add(pairKey);
+          edges.push({
+            id: `edge-seq-${prev.pipelineName}-${curr.pipelineName}`,
+            source: `pipeline-${prev.pipelineName}`,
+            target: `pipeline-${curr.pipelineName}`,
+            relation: 'followed_by',
+            weight: 0.4,
+          });
+        }
+      }
+    }
+  }
+
+  return { nodes, edges };
+}
+
 /* --- component --- */
 export function KnowledgeGraphView() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -224,18 +314,35 @@ export function KnowledgeGraphView() {
   const [selectedNode, setSelectedNode] = useState<SimNode | null>(null);
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
   const [showEdgeLabels, setShowEdgeLabels] = useState(false);
+  const [apiHistory, setApiHistory] = useState<{ pipelineName: string; nodesRun: number; success: boolean; cost: number; tokensUsed: number; duration: number; runNumber: number }[] | null>(null);
 
+  const { history: storeHistory } = useCortivexStore();
+
+  // Fetch history from API on mount
+  useEffect(() => {
+    apiFetchHistory()
+      .then((data) => setApiHistory(data))
+      .catch(() => {
+        // API unavailable — will use store history or demo fallback
+        setApiHistory(null);
+      });
+  }, []);
+
+  // Build graph from real execution history, fall back to demo graph
+  const sourceHistory = apiHistory ?? storeHistory;
+  const realGraph = useMemo(() => buildGraphFromHistory(sourceHistory), [sourceHistory]);
   const demoGraph = useMemo(() => generateDemoGraph(), []);
+  const baseGraph = realGraph ?? demoGraph;
 
   const displayGraph = useMemo(() => {
-    if (!activeFilter) return demoGraph;
-    const filteredNodes = demoGraph.nodes.filter((n) => n.type === activeFilter);
+    if (!activeFilter) return baseGraph;
+    const filteredNodes = baseGraph.nodes.filter((n) => n.type === activeFilter);
     const filteredIds = new Set(filteredNodes.map((n) => n.id));
-    const filteredEdges = demoGraph.edges.filter(
+    const filteredEdges = baseGraph.edges.filter(
       (e) => filteredIds.has(e.source) && filteredIds.has(e.target),
     );
     return { nodes: filteredNodes, edges: filteredEdges };
-  }, [demoGraph, activeFilter]);
+  }, [baseGraph, activeFilter]);
 
   const connectionCounts = useMemo(() => {
     const counts: Record<string, number> = {};

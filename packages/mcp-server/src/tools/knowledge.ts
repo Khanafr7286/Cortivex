@@ -1,7 +1,7 @@
 /**
- * cortivex_knowledge — Query the shared CRDT knowledge graph.
+ * cortivex_knowledge — Query the shared knowledge graph from execution history.
  */
-import { MeshManager } from '@cortivex/core';
+import { HistoryRecorder } from '@cortivex/core';
 
 export interface KnowledgeInput {
   query?: string;
@@ -10,49 +10,66 @@ export interface KnowledgeInput {
 }
 
 export async function knowledgeTool(input: KnowledgeInput): Promise<{ content: Array<{ type: string; text: string }> }> {
-  const mesh = new MeshManager();
-  const knowledge = await mesh.queryKnowledge({
-    query: input.query,
-    nodeType: input.nodeType,
-    limit: input.limit ?? 50,
-  });
+  const recorder = new HistoryRecorder();
+  const history = await recorder.getHistory();
+  const limit = input.limit ?? 50;
+
+  // Build knowledge entries from execution history
+  const entries: Array<{
+    type: string;
+    summary: string;
+    pipeline: string;
+    success: boolean;
+    cost: number;
+    timestamp: string;
+  }> = [];
+
+  for (const record of history) {
+    for (const node of record.nodeResults) {
+      // Filter by nodeType if specified
+      if (input.nodeType && node.nodeType !== input.nodeType) continue;
+
+      // Filter by query if specified
+      if (input.query) {
+        const q = input.query.toLowerCase();
+        if (!node.nodeId.toLowerCase().includes(q) && !node.nodeType.toLowerCase().includes(q)) continue;
+      }
+
+      entries.push({
+        type: node.nodeType,
+        summary: `${node.nodeId}: ${node.success ? 'passed' : 'failed'} ($${node.cost.toFixed(3)}, ${node.duration.toFixed(1)}s)`,
+        pipeline: record.pipeline,
+        success: node.success,
+        cost: node.cost,
+        timestamp: record.timestamp,
+      });
+    }
+  }
+
+  // Collect unique node types
+  const nodeTypes = [...new Set(entries.map((e) => e.type))];
 
   const sections: string[] = [];
 
-  // Summary
   sections.push([
     `Knowledge Graph${input.query ? ` (query: "${input.query}")` : ''}:`,
-    `  Total Entries: ${knowledge.totalEntries}`,
-    `  Node Types: ${knowledge.nodeTypes.join(', ') || 'none'}`,
-    `  Last Updated: ${knowledge.lastUpdated}`,
+    `  Total Entries: ${entries.length}`,
+    `  Node Types: ${nodeTypes.join(', ') || 'none'}`,
+    `  Source: ${history.length} execution records`,
   ].join('\n'));
 
-  // Entries
-  if (knowledge.entries.length > 0) {
-    const entryLines = knowledge.entries.map((e: Record<string, unknown>) => {
-      const meta = e.source ? ` (source: ${e.source})` : '';
-      return [
-        `  - [${e.type}] ${e.summary}`,
-        `    ID: ${e.id}`,
-        `    Confidence: ${((e.confidence as number) * 100).toFixed(0)}%${meta}`,
-        `    Created: ${e.createdAt}`,
-      ].join('\n');
-    });
-    sections.push(`Entries (${knowledge.entries.length}):\n${entryLines.join('\n')}`);
+  const limited = entries.slice(0, limit);
+  if (limited.length > 0) {
+    const entryLines = limited.map((e) => [
+      `  - [${e.type}] ${e.summary}`,
+      `    Pipeline: ${e.pipeline} | ${e.timestamp}`,
+    ].join('\n'));
+    sections.push(`Entries (${limited.length}${entries.length > limit ? ` of ${entries.length}` : ''}):\n${entryLines.join('\n')}`);
   } else {
     sections.push(
       'Entries: none\n' +
-      '  No knowledge entries found. Run pipelines with KnowledgeCurator nodes to populate the knowledge graph.',
+      '  No knowledge entries found. Run pipelines to populate the knowledge graph.',
     );
-  }
-
-  // Edges
-  if (knowledge.edges && knowledge.edges.length > 0) {
-    const edgeLines = knowledge.edges
-      .slice(0, 20)
-      .map((e: Record<string, unknown>) => `  ${e.from} --[${e.relation}]--> ${e.to}`);
-    const moreStr = knowledge.edges.length > 20 ? `\n  ... and ${knowledge.edges.length - 20} more` : '';
-    sections.push(`Relationships (${knowledge.edges.length}):\n${edgeLines.join('\n')}${moreStr}`);
   }
 
   return {

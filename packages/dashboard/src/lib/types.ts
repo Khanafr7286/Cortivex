@@ -60,6 +60,7 @@ export interface PipelineNode {
   duration: number;
   cost: number;
   tokensUsed: number;
+  filesModified: string[];
 }
 
 export interface PipelineConnection {

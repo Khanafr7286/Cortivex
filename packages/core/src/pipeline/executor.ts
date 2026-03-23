@@ -489,6 +489,7 @@ export class PipelineExecutor extends EventEmitter<ExecutorEvents> {
       await readFile(signalPath, 'utf-8');
       return true;
     } catch {
+      // Signal file doesn't exist — no stop requested
       return false;
     }
   }

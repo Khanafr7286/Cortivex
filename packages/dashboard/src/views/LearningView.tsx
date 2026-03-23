@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import {
   BarChart,
@@ -30,6 +30,7 @@ import {
   CheckCircle,
   Cpu,
   Sparkles,
+  RefreshCw,
 } from 'lucide-react';
 import { useCortivexStore } from '@/stores/cortivexStore';
 import type { InsightAction, Suggestion } from '@/lib/types';
@@ -85,7 +86,46 @@ const GRID_STROKE = '#1A1F2E';
 const AXIS_TICK = { fontSize: 9, fill: '#5A6478', fontFamily: 'Space Mono' };
 
 export function LearningView() {
-  const { history, insights, suggestions } = useCortivexStore();
+  const { history, insights, suggestions, fetchInitialData } = useCortivexStore();
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      await fetchInitialData();
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [fetchInitialData]);
+
+  // Empty state — no data available
+  if (history.length === 0 && insights.length === 0 && suggestions.length === 0) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center p-6">
+        <div className="bg-canvas-card border border-canvas-border rounded-2xl p-8 text-center max-w-md shadow-xl">
+          <div className="w-16 h-16 rounded-2xl bg-cortivex-cyan/10 flex items-center justify-center mx-auto mb-4">
+            <TrendingUp size={28} className="text-cortivex-cyan" />
+          </div>
+          <h3 className="text-lg font-semibold text-text-primary mb-2">
+            No Learning Data Yet
+          </h3>
+          <p className="text-sm text-text-muted mb-6">
+            Run some pipelines to start collecting execution history, insights, and optimization suggestions.
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="mx-auto"
+          >
+            <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
+            {isRefreshing ? 'Refreshing...' : 'Refresh from API'}
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   // Summary stats
   const stats = useMemo(() => {
@@ -186,10 +226,22 @@ export function LearningView() {
     <div className="h-full overflow-y-auto p-6 space-y-6">
       {/* Tab navigation */}
       <Tabs defaultValue="overview">
-        <TabsList>
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="insights">Insights & Learning</TabsTrigger>
-        </TabsList>
+        <div className="flex items-center justify-between">
+          <TabsList>
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="insights">Insights & Learning</TabsTrigger>
+          </TabsList>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="text-[10px] h-7 px-3"
+          >
+            <RefreshCw size={12} className={cn('mr-1', isRefreshing && 'animate-spin')} />
+            {isRefreshing ? 'Refreshing...' : 'Refresh'}
+          </Button>
+        </div>
 
         {/* ============================================ */}
         {/* OVERVIEW TAB                                 */}

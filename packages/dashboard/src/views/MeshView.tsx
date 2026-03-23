@@ -2,6 +2,7 @@ import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as d3 from 'd3';
 import { Activity, ChevronLeft, ChevronRight } from 'lucide-react';
+import { useCortivexStore } from '@/stores/cortivexStore';
 
 /* ═══════════════════════════════════════════════════════════
    Types
@@ -138,13 +139,17 @@ const EVENT_COLORS: Record<string, string> = {
   QUORUM: '#7B6EF6',
 };
 
-const INIT_AGENTS: SimAgent[] = [
+// Default agents used when WebSocket bootstrap provides agent list
+const DEFAULT_AGENTS: SimAgent[] = [
   { id: 'alpha', name: 'Alpha', role: 'follower', status: 'idle', tokensUsed: 0, health: 1 },
   { id: 'beta', name: 'Beta', role: 'follower', status: 'idle', tokensUsed: 0, health: 1 },
   { id: 'gamma', name: 'Gamma', role: 'follower', status: 'idle', tokensUsed: 0, health: 1 },
   { id: 'delta', name: 'Delta', role: 'follower', status: 'idle', tokensUsed: 0, health: 1 },
   { id: 'epsilon', name: 'Epsilon', role: 'follower', status: 'idle', tokensUsed: 0, health: 1 },
 ];
+
+// Start empty — populated from store mesh events or simulation bootstrap
+const INIT_AGENTS: SimAgent[] = [];
 
 /* ═══════════════════════════════════════════════════════════
    Helpers
@@ -194,10 +199,48 @@ const posCache = new Map<string, { x: number; y: number }>();
    ═══════════════════════════════════════════════════════════ */
 
 export function MeshView() {
+  const { meshEvents: storeMeshEvents } = useCortivexStore();
   const [agents, setAgents] = useState<SimAgent[]>(INIT_AGENTS);
   const [events, setEvents] = useState<SimEvent[]>([]);
   const [cluster, setCluster] = useState({ term: 0, leaderId: '' });
   const [panelOpen, setPanelOpen] = useState(true);
+  const bootstrappedRef = useRef(false);
+
+  // Populate agents from store mesh events (swarm:bootstrap provides agent list)
+  useEffect(() => {
+    if (bootstrappedRef.current) return;
+
+    // Check if store has BOOTSTRAP events with agent data
+    const bootstrapEvent = storeMeshEvents.find((e) => e.type === 'BOOTSTRAP');
+    if (bootstrapEvent) {
+      // Bootstrap detected from store — use DEFAULT_AGENTS as the agent list
+      bootstrappedRef.current = true;
+      setAgents(DEFAULT_AGENTS);
+
+      // Convert store mesh events into local SimEvents for the event panel
+      const simEvents: SimEvent[] = storeMeshEvents.map((e) => ({
+        id: e.id,
+        type: e.type,
+        agent: e.agentName,
+        details: e.details,
+        timestamp: e.timestamp,
+      }));
+      setEvents(simEvents);
+    }
+  }, [storeMeshEvents]);
+
+  // If no store events after a short delay, start the internal simulation with default agents
+  useEffect(() => {
+    if (agents.length > 0) return; // Already have agents
+    const timer = setTimeout(() => {
+      if (!bootstrappedRef.current && agents.length === 0) {
+        // No WebSocket data arrived — bootstrap with default agents for demo
+        bootstrappedRef.current = true;
+        setAgents(DEFAULT_AGENTS);
+      }
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [agents.length]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -299,13 +342,19 @@ export function MeshView() {
 
   /* ═══════════════════════════════════════════════════════════
      SIMULATION — Self-running consensus protocol demo
+     Only starts once agents are populated (from store or fallback)
      ═══════════════════════════════════════════════════════════ */
 
   useEffect(() => {
+    // Wait until agents are populated before running the simulation
+    if (agents.length === 0) return;
+
     const schedule = (fn: () => void, ms: number) => {
       const t = setTimeout(fn, ms);
       timersRef.current.push(t);
     };
+
+    const simAgents = agentsRef.current;
 
     function runCycle(cycle: number) {
       const term = cycle + 1;
@@ -319,11 +368,11 @@ export function MeshView() {
             addEvent(
               'BOOTSTRAP',
               'System',
-              `Cluster bootstrap — spawning ${INIT_AGENTS.length} agents`,
+              `Cluster bootstrap — spawning ${simAgents.length} agents`,
             ),
           300,
         );
-        INIT_AGENTS.forEach((a, i) => {
+        simAgents.forEach((a, i) => {
           schedule(() => {
             addEvent('BOOTSTRAP', a.name, 'Joined cluster as follower');
             setAgents((prev) =>
@@ -341,9 +390,9 @@ export function MeshView() {
       }
 
       // ── Pick candidate (rotate through agents) ──
-      const candidateIdx = cycle % INIT_AGENTS.length;
-      const cid = INIT_AGENTS[candidateIdx].id;
-      const cname = INIT_AGENTS[candidateIdx].name;
+      const candidateIdx = cycle % simAgents.length;
+      const cid = simAgents[candidateIdx].id;
+      const cname = simAgents[candidateIdx].name;
 
       // ── Election start ──
       schedule(() => {
@@ -363,9 +412,9 @@ export function MeshView() {
       }, base);
 
       // ── Voting ──
-      const voters = INIT_AGENTS.filter((a) => a.id !== cid);
+      const voters = simAgents.filter((a) => a.id !== cid);
       let votesFor = 0;
-      const needed = Math.floor(INIT_AGENTS.length / 2) + 1;
+      const needed = Math.floor(simAgents.length / 2) + 1;
 
       voters.forEach((v, i) => {
         schedule(() => {
@@ -396,7 +445,7 @@ export function MeshView() {
         addEvent(
           'LEADER',
           cname,
-          `Elected LEADER (term ${term}, ${needed}/${INIT_AGENTS.length} quorum)`,
+          `Elected LEADER (term ${term}, ${needed}/${simAgents.length} quorum)`,
         );
       }, electTime);
 
@@ -408,7 +457,7 @@ export function MeshView() {
         addEvent(
           'QUORUM',
           'System',
-          `Quorum: ${alive}/${INIT_AGENTS.length} alive — QUORUM MET`,
+          `Quorum: ${alive}/${simAgents.length} alive — QUORUM MET`,
         );
       }, electTime + 500);
 
@@ -507,7 +556,7 @@ export function MeshView() {
       timersRef.current = [];
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [agents.length]);
 
   /* ═══════════════════════════════════════════════════════════
      EFFECT 1: One-time SVG + Canvas setup

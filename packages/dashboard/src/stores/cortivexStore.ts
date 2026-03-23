@@ -23,6 +23,13 @@ import {
   demoSuggestions,
   createLiveExecution,
 } from '@/lib/demo-data';
+import {
+  fetchPipelines as apiFetchPipelines,
+  fetchMeshClaims as apiFetchMeshClaims,
+  fetchMeshConflicts as apiFetchMeshConflicts,
+  fetchInsights as apiFetchInsights,
+  fetchHistory as apiFetchHistory,
+} from '@/lib/api';
 
 // ============================================
 // STATE INTERFACE
@@ -50,6 +57,7 @@ export interface CortivexState {
   isConfigPanelOpen: boolean;
   isConnected: boolean;
   isSidebarExpanded: boolean;
+  isLoading: boolean;
 
   // Editor state
   editorNodes: PipelineNode[];
@@ -60,6 +68,9 @@ export interface CortivexState {
   executionSimulation: ReturnType<typeof createLiveExecution> | null;
   terminalOutput: { nodeId: string; lines: { type: string; text: string }[] }[];
   activeTerminalTab: string | null;
+
+  // Actions — Data loading
+  fetchInitialData: () => Promise<void>;
 
   // Actions — Pipeline
   loadPipelines: () => void;
@@ -101,32 +112,87 @@ export interface CortivexState {
 // ============================================
 
 export const useCortivexStore = create<CortivexState>((set, get) => ({
-  // Initial state
-  pipelines: demoPipelines,
-  activePipeline: demoPipelines[0],
+  // Initial state — empty until fetchInitialData loads real data
+  pipelines: [],
+  activePipeline: null,
   activeRun: null,
 
-  meshClaims: demoMeshClaims,
-  meshConflicts: demoMeshConflicts,
-  meshEvents: demoMeshEvents,
+  meshClaims: [],
+  meshConflicts: [],
+  meshEvents: [],
 
-  insights: demoInsights,
-  history: demoHistory,
-  suggestions: demoSuggestions,
+  insights: [],
+  history: [],
+  suggestions: [],
 
   activeView: 'mesh',
   selectedNode: null,
   isConfigPanelOpen: false,
   isConnected: false,
   isSidebarExpanded: false,
+  isLoading: true,
 
-  editorNodes: demoPipelines[0].nodes,
-  editorConnections: demoPipelines[0].connections,
-  editorPipelineName: demoPipelines[0].name,
+  editorNodes: [],
+  editorConnections: [],
+  editorPipelineName: '',
 
   executionSimulation: null,
   terminalOutput: [],
   activeTerminalTab: null,
+
+  // ============================================
+  // DATA LOADING
+  // ============================================
+
+  fetchInitialData: async () => {
+    set({ isLoading: true });
+
+    // Fetch all endpoints in parallel, falling back to demo data on failure
+    const [pipelines, meshClaims, meshConflicts, insights, history] =
+      await Promise.all([
+        apiFetchPipelines().catch(() => {
+          console.warn('[Cortivex] /api/pipelines unavailable, using demo data');
+          return demoPipelines;
+        }),
+        apiFetchMeshClaims().catch(() => {
+          console.warn('[Cortivex] /api/mesh/claims unavailable, using demo data');
+          return demoMeshClaims;
+        }),
+        apiFetchMeshConflicts().catch(() => {
+          console.warn('[Cortivex] /api/mesh/conflicts unavailable, using demo data');
+          return demoMeshConflicts;
+        }),
+        apiFetchInsights().catch(() => {
+          console.warn('[Cortivex] /api/learning/insights unavailable, using demo data');
+          return demoInsights;
+        }),
+        apiFetchHistory().catch(() => {
+          console.warn('[Cortivex] /api/learning/history unavailable, using demo data');
+          return demoHistory;
+        }),
+      ]);
+
+    // If no mesh events came from API, use demo events as seed
+    const meshEvents = demoMeshEvents;
+    const suggestions = demoSuggestions;
+
+    const activePipeline = pipelines.length > 0 ? pipelines[0] : null;
+
+    set({
+      pipelines,
+      activePipeline,
+      meshClaims,
+      meshConflicts,
+      meshEvents,
+      insights,
+      history,
+      suggestions,
+      editorNodes: activePipeline ? activePipeline.nodes : [],
+      editorConnections: activePipeline ? activePipeline.connections : [],
+      editorPipelineName: activePipeline ? activePipeline.name : '',
+      isLoading: false,
+    });
+  },
 
   // ============================================
   // PIPELINE ACTIONS
@@ -157,7 +223,7 @@ export const useCortivexStore = create<CortivexState>((set, get) => ({
       status: 'running',
       startedAt: new Date().toISOString(),
       completedAt: null,
-      nodes: editorNodes.map((n) => ({ ...n, status: 'pending' as NodeStatus, progress: 0, output: '', duration: 0, cost: 0, tokensUsed: 0 })),
+      nodes: editorNodes.map((n) => ({ ...n, status: 'pending' as NodeStatus, progress: 0, output: '', duration: 0, cost: 0, tokensUsed: 0, filesModified: [] })),
       connections: editorConnections,
       totalCost: 0,
       totalDuration: 0,
@@ -361,6 +427,7 @@ export const useCortivexStore = create<CortivexState>((set, get) => ({
                   duration: result.duration,
                   cost: result.cost,
                   tokensUsed: result.tokens,
+                  filesModified: result.filesModified || [],
                 }
               : n,
           );

@@ -1,7 +1,9 @@
 /**
- * cortivex_stop — Stop a running pipeline by run ID.
+ * cortivex_stop — Stop a running pipeline by writing a signal file.
+ * The PipelineExecutor checks for this file between batches.
  */
-import { PipelineExecutor } from '@cortivex/core';
+import { writeFile, mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { getRunById } from './run.js';
 
 export interface StopInput {
@@ -37,19 +39,25 @@ export async function stopTool(input: StopInput): Promise<{ content: Array<{ typ
     };
   }
 
-  const executor = new PipelineExecutor();
-  await executor.stop(input.runId);
+  // Write stop signal file — the executor checks for this between batches
+  const signalDir = join(process.cwd(), '.cortivex', 'signals');
+  await mkdir(signalDir, { recursive: true });
+  await writeFile(
+    join(signalDir, `stop-${input.runId}.json`),
+    JSON.stringify({ runId: input.runId, signal: 'stop', timestamp: new Date().toISOString() }),
+    'utf-8'
+  );
 
   return {
     content: [{
       type: 'text',
       text: [
-        `Pipeline run stopped successfully.`,
+        `Stop signal sent to pipeline run.`,
         ``,
         `Run ID: ${input.runId}`,
         `Pipeline: ${run.pipeline}`,
-        `Status: cancelled`,
-        `Nodes completed before stop: ${run.nodes.filter((n) => n.status === 'completed').length}/${run.nodes.length}`,
+        `The pipeline will halt after the current node completes.`,
+        `Nodes completed so far: ${run.nodes.filter((n) => n.status === 'completed').length}/${run.nodes.length}`,
       ].join('\n'),
     }],
   };

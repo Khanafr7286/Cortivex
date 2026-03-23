@@ -2,26 +2,29 @@
  * cortivex_nodes — List available agent node types with their configurations.
  */
 import { nodeRegistry } from '@cortivex/core';
+import type { NodeType, NodeCategory } from '@cortivex/core';
 
 export interface NodesInput {
   category?: string;
 }
 
 export async function nodesTool(input: NodesInput): Promise<{ content: Array<{ type: string; text: string }> }> {
-  const allNodes = nodeRegistry.getAll();
-  const categories = new Set(allNodes.map((n) => n.category));
+  const categories = nodeRegistry.getCategories();
 
-  // Filter by category if provided
-  const filtered = input.category
-    ? allNodes.filter((n) => n.category === input.category)
-    : allNodes;
+  // Get all nodes, optionally filtered by category
+  let filtered: NodeType[];
+  if (input.category) {
+    filtered = nodeRegistry.listByCategory(input.category as NodeCategory);
+  } else {
+    filtered = nodeRegistry.listAll();
+  }
 
   if (filtered.length === 0) {
     if (input.category) {
       return {
         content: [{
           type: 'text',
-          text: `No node types found in category "${input.category}". Available categories: ${[...categories].join(', ')}`,
+          text: `No node types found in category "${input.category}". Available categories: ${categories.join(', ')}`,
         }],
       };
     }
@@ -38,11 +41,11 @@ export async function nodesTool(input: NodesInput): Promise<{ content: Array<{ t
   sections.push([
     `Available Node Types${input.category ? ` (category: ${input.category})` : ''}:`,
     `  Total: ${filtered.length}`,
-    `  Categories: ${[...categories].join(', ')}`,
+    `  Categories: ${categories.join(', ')}`,
   ].join('\n'));
 
   // Group by category
-  const grouped = new Map<string, typeof filtered>();
+  const grouped = new Map<string, NodeType[]>();
   for (const node of filtered) {
     const cat = node.category;
     if (!grouped.has(cat)) grouped.set(cat, []);
@@ -50,7 +53,7 @@ export async function nodesTool(input: NodesInput): Promise<{ content: Array<{ t
   }
 
   for (const [cat, nodes] of grouped) {
-    const nodeLines = nodes.map((n) => [
+    const nodeLines = nodes.map((n: NodeType) => [
       `  - ${n.name} (${n.id})`,
       `    ${n.description}`,
       `    Model: ${n.defaultModel} | Avg Cost: $${n.avgCost.toFixed(2)} | Avg Duration: ${n.avgDuration}s`,

@@ -64,20 +64,8 @@ export function LiveExecutionView() {
     (t) => t.nodeId === activeTerminalTab,
   );
 
-  // Files modified (mock based on completed nodes)
-  const filesModified = completedNodes.flatMap((n) => {
-    const fileMap: Record<string, string[]> = {
-      'lint-fixer': ['src/auth/login.ts', 'src/utils/helpers.ts'],
-      'type-checker': ['src/api/routes.ts'],
-      'code-reviewer': ['REVIEW.md'],
-      'test-generator': ['tests/auth.test.ts', 'tests/routes.test.ts'],
-      'doc-generator': ['docs/API.md', 'README.md'],
-      'changelog-writer': ['CHANGELOG.md'],
-      'security-scanner': ['SECURITY_REPORT.md'],
-      'secret-detector': [],
-    };
-    return fileMap[n.typeId] || [`output/${n.typeId}.json`];
-  });
+  // Files modified — read from actual node run state
+  const filesModified = completedNodes.flatMap((n) => n.filesModified || []);
 
   return (
     <div className="flex flex-col h-full">

@@ -36,7 +36,7 @@ Most Claude Code skills tell agents what to do. Cortivex teaches agents how to t
 
 Every skill in this library is a 450-1,200 line operational manual. Not a thin wrapper. Not a checklist. Each one includes reasoning protocols that force step-by-step thinking before action, anti-pattern tables with WRONG/RIGHT code examples showing exactly what fails and why, grounding rules for when the situation is uncertain, and Advanced Capabilities sections with production-grade MCP tool examples, YAML configurations, and JSON schemas. The result is measurably better agent output.
 
-Underneath, 15 production-grade skills power a complete multi-agent orchestration system: DAG-based pipelines that decompose complex tasks into parallel agent workflows, a filesystem-based mesh protocol that prevents agents from overwriting each other's work, leader election with quorum-based voting, shared knowledge graphs with content-hash deduplication that prevent duplicate analysis across agents, and a self-learning engine that records execution metrics and applies confidence-scored optimizations automatically.
+Underneath, 15 production-grade skills power a complete multi-agent orchestration system: DAG-based pipelines that decompose complex tasks into parallel agent workflows, a filesystem-based mesh protocol that prevents agents from overwriting each other's work, a leader election protocol defined in skills and simulated in the dashboard for visualization, shared knowledge graphs with content-hash deduplication that prevent duplicate analysis across agents, and a self-learning engine that records execution metrics and applies confidence-scored optimizations automatically.
 
 > **New to Cortivex?** You don't need to learn 15 skills or memorize CLI commands. After running `cortivex install-skills`, just use Claude Code normally. Ask it to "review my PR" and the pipeline skill activates automatically, selects the right template, builds the agent DAG, and executes it. The skills work in the background. You interact with natural language, Cortivex handles the orchestration.
 
@@ -97,7 +97,7 @@ Cortivex is a comprehensive AI agent orchestration system that transforms Claude
 > | **Agent Collaboration** | Agents work in isolation, no shared context | Agents coordinate via mesh protocol with shared knowledge graphs |
 > | **Coordination** | Manual orchestration between tasks | DAG-based pipelines with automatic parallel execution |
 > | **File Conflicts** | Agents overwrite each other's work | Mesh protocol with claim/release, deadlock detection, 5 resolution strategies |
-> | **Consensus** | No multi-agent decisions | Leader election with quorum-based voting, terms, and automatic failover |
+> | **Consensus** | No multi-agent decisions | Leader election protocol in skills, visualized in dashboard |
 > | **Knowledge Sharing** | Each agent starts from scratch | Shared knowledge graphs with content-hash deduplication and cross-agent synthesis |
 > | **Learning** | Static behavior, no adaptation | Confidence-scored insights with automatic optimization (34% faster after 50 runs) |
 > | **Complex Tasks** | Manual breakdown required | Automatic decomposition with dependency ordering and cost estimation |
@@ -128,7 +128,7 @@ User → Cortivex (CLI/MCP) → Task Decomposer → Pipeline Engine → Agents �
 | **Execution** | Pipeline Engine | Runs agent DAGs with parallel execution and retry policies |
 | **Coordination** | Mesh Protocol | File ownership, conflict resolution, deadlock detection |
 | **Intelligence** | Knowledge Graph | Shared knowledge graphs across agents with deduplication |
-| **Consensus** | Leader Election | Single coordinator in multi-node clusters, automatic failover |
+| **Consensus** | Leader Election | Skill-defined protocol, simulated in dashboard for visualization |
 | **Debugging** | Pipeline Debugger | Breakpoints, step-through, replay, execution traces |
 | **Optimization** | Context Compressor | Preserves actionable information across agent handoffs |
 | **Monitoring** | Drift Detector | Tracks architecture, config, coverage, and doc drift |
@@ -159,7 +159,7 @@ This protocol is injected into every spawned agent's system prompt. Agents that 
 
 ### Leader Election for Multi-Node Clusters
 
-For distributed deployments across multiple machines, Cortivex implements quorum-based leader election. Exactly one node coordinates task scheduling at any time. If the leader fails, remaining nodes detect the missed heartbeats and elect a new leader within seconds. This prevents split-brain scenarios where two coordinators assign conflicting work.
+The cortivex-consensus skill defines a leader election protocol with terms, quorum, heartbeats, and failover semantics. The dashboard visualizes this protocol via the SwarmSimulator, which broadcasts election events over WebSocket for real-time monitoring. Runtime implementation of distributed consensus is planned for a future release.
 
 ### Shared Knowledge Graphs
 
