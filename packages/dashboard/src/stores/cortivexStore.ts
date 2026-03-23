@@ -458,7 +458,7 @@ export const useCortivexStore = create<CortivexState>((set, get) => ({
 
   addMeshEvent: (event) => {
     set((state) => ({
-      meshEvents: [event, ...state.meshEvents].slice(0, 100),
+      meshEvents: [event, ...state.meshEvents].slice(0, 500),
     }));
   },
 

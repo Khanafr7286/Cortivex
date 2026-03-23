@@ -247,71 +247,63 @@ export class SwarmSimulator {
       candidateName: candidate.name,
     });
 
-    // Voting: running nodes vote yes, pending nodes abstain
+    // Voting: synchronous — no setTimeout delays that let heartbeats
+    // overwrite the election state before it completes
     let votesFor = 0;
     const quorumNeeded = Math.floor(aliveAgents.length / 2) + 1;
 
-    setTimeout(() => {
-      if (!this.running) return;
+    for (const agent of aliveAgents) {
+      const granted = agent.status === 'running' || agent.status === 'completed' || agent.id === candidate.id;
+      if (granted) votesFor++;
 
-      for (const agent of aliveAgents) {
-        // Running/completed agents always vote yes for the candidate
-        const granted = agent.status === 'running' || agent.status === 'completed' || agent.id === candidate.id;
-        if (granted) votesFor++;
+      broadcast('swarm:vote_cast', {
+        term: this.term,
+        voterId: agent.id,
+        voterName: agent.name,
+        candidateId: candidate.id,
+        granted,
+        votesFor,
+        votesNeeded: quorumNeeded,
+      });
+    }
 
-        broadcast('swarm:vote_cast', {
-          term: this.term,
-          voterId: agent.id,
-          voterName: agent.name,
-          candidateId: candidate.id,
-          granted,
-          votesFor,
-          votesNeeded: quorumNeeded,
-        });
+    const elected = votesFor >= quorumNeeded;
+
+    if (elected) {
+      // Demote old leader
+      if (this.leaderId && this.agents.has(this.leaderId)) {
+        const old = this.agents.get(this.leaderId)!;
+        if (old.role !== 'dead') old.role = 'follower';
       }
 
-      const elected = votesFor >= quorumNeeded;
+      candidate.role = 'leader';
+      this.leaderId = candidate.id;
+      this.electionInProgress = false;
 
-      setTimeout(() => {
-        if (!this.running) return;
-
-        if (elected) {
-          // Demote old leader
-          if (this.leaderId && this.agents.has(this.leaderId)) {
-            const old = this.agents.get(this.leaderId)!;
-            if (old.role !== 'dead') old.role = 'follower';
-          }
-
-          candidate.role = 'leader';
-          this.leaderId = candidate.id;
-          this.electionInProgress = false;
-
-          for (const agent of aliveAgents) {
-            if (agent.id !== candidate.id && agent.role !== 'dead') {
-              agent.role = 'follower';
-            }
-          }
-
-          broadcast('swarm:leader_elected', {
-            term: this.term,
-            leaderId: candidate.id,
-            leaderName: candidate.name,
-            votes: votesFor,
-            quorum: quorumNeeded,
-            totalAgents: aliveAgents.length,
-          });
-        } else {
-          candidate.role = 'follower';
-          this.electionInProgress = false;
-          broadcast('swarm:election_failed', {
-            term: this.term,
-            candidateId: candidate.id,
-            votes: votesFor,
-            quorum: quorumNeeded,
-          });
+      for (const agent of aliveAgents) {
+        if (agent.id !== candidate.id && agent.role !== 'dead') {
+          agent.role = 'follower';
         }
-      }, 800);
-    }, 1200);
+      }
+
+      broadcast('swarm:leader_elected', {
+        term: this.term,
+        leaderId: candidate.id,
+        leaderName: candidate.name,
+        votes: votesFor,
+        quorum: quorumNeeded,
+        totalAgents: aliveAgents.length,
+      });
+    } else {
+      candidate.role = 'follower';
+      this.electionInProgress = false;
+      broadcast('swarm:election_failed', {
+        term: this.term,
+        candidateId: candidate.id,
+        votes: votesFor,
+        quorum: quorumNeeded,
+      });
+    }
   }
 
   private sendHeartbeats(): void {
