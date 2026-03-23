@@ -563,12 +563,18 @@ export function MeshView() {
      ═══════════════════════════════════════════════════════════ */
 
   useEffect(() => {
-    if (!setupDoneRef.current || !linkGRef.current || !nodeGRef.current)
+    if (!linkGRef.current || !nodeGRef.current || !containerRef.current)
       return;
     const linkG = linkGRef.current;
     const nodeG = nodeGRef.current;
 
-    const { w: W, h: H } = sizeRef.current;
+    // Re-read container size directly (sizeRef may not be updated yet on first render)
+    let { w: W, h: H } = sizeRef.current;
+    if (W === 0 || H === 0) {
+      W = containerRef.current.clientWidth;
+      H = containerRef.current.clientHeight;
+      sizeRef.current = { w: W, h: H };
+    }
     if (W === 0 || H === 0) return;
 
     const isInitial = posCache.size === 0;
@@ -986,29 +992,31 @@ export function MeshView() {
         </div>
       )}
 
-      {/* Main visualization area — only rendered when agents exist */}
+      {/* Main visualization area — always rendered so refs are available for D3 setup */}
+      <div
+        ref={containerRef}
+        className="absolute inset-0"
+        style={{
+          right: panelOpen && hasAgents ? 320 : 0,
+          transition: 'right 0.3s ease',
+          opacity: hasAgents ? 1 : 0,
+          pointerEvents: hasAgents ? 'auto' : 'none',
+        }}
+      >
+        <svg
+          ref={svgRef}
+          className="absolute inset-0"
+          style={{ zIndex: 1 }}
+        />
+        <canvas
+          ref={canvasRef}
+          className="absolute inset-0 pointer-events-none"
+          style={{ zIndex: 2 }}
+        />
+      </div>
+
       {hasAgents && (
         <>
-          <div
-            ref={containerRef}
-            className="absolute inset-0"
-            style={{
-              right: panelOpen ? 320 : 0,
-              transition: 'right 0.3s ease',
-            }}
-          >
-            <svg
-              ref={svgRef}
-              className="absolute inset-0"
-              style={{ zIndex: 1 }}
-            />
-            <canvas
-              ref={canvasRef}
-              className="absolute inset-0 pointer-events-none"
-              style={{ zIndex: 2 }}
-            />
-          </div>
-
           {/* Legend */}
           <div className="absolute top-4 left-4 z-10 panel p-3">
             <div className="text-label uppercase text-text-muted mb-2 font-mono">
