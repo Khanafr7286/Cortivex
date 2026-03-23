@@ -828,3 +828,4 @@ session.onBreakpointHit((bp) => {
   console.log(`Breakpoint ${bp.id} hit at node ${bp.nodeId}`);
 });
 await session.waitForCompletion();
+```

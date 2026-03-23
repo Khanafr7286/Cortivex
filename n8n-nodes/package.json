@@ -22,11 +22,11 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "n8n-workflow": "*"
+    "n8n-workflow": "^1.0.0"
   },
   "devDependencies": {
     "typescript": "^5.0.0",
-    "n8n-core": "*"
+    "n8n-core": "^1.0.0"
   },
   "keywords": [
     "n8n-community-node-package",
