@@ -41,6 +41,7 @@ router.post('/', async (req, res) => {
             pipelineDef = await loader.load(pipeline);
         }
         catch {
+            // Pipeline not found by name — try parsing as inline YAML/JSON
             try {
                 pipelineDef = loader.loadFromString(pipeline);
             }

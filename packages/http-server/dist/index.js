@@ -13,36 +13,12 @@ import meshRoutes from './routes/mesh.js';
 import learningRoutes from './routes/learning.js';
 import n8nExportRoutes from './routes/n8n-export.js';
 import { createWebSocketHandler, getClientCount } from './ws/handler.js';
+export { validateInput, validatePipelineName, validateAgentId } from './validation.js';
 const PORT = parseInt(process.env.CORTIVEX_PORT ?? '3939', 10);
-// ── Input Validation Helpers ──────────────────────────────────────────
-/**
- * Validate that a string matches an expected pattern.
- * Returns the sanitized string or throws an error.
- */
-export function validateInput(value, pattern, fieldName, maxLength = 256) {
-    if (typeof value !== 'string') {
-        throw new Error(`${fieldName} must be a string`);
-    }
-    if (value.length > maxLength) {
-        throw new Error(`${fieldName} exceeds maximum length of ${maxLength}`);
-    }
-    if (!pattern.test(value)) {
-        throw new Error(`${fieldName} contains invalid characters`);
-    }
-    return value;
-}
-/** Validate a pipeline name: alphanumeric, hyphens, underscores, max 64 chars */
-export function validatePipelineName(name) {
-    return validateInput(name, /^[a-zA-Z0-9_-]+$/, 'Pipeline name', 64);
-}
-/** Validate an agent ID: alphanumeric, hyphens, underscores, dots, max 128 chars */
-export function validateAgentId(id) {
-    return validateInput(id, /^[a-zA-Z0-9._-]+$/, 'Agent ID', 128);
-}
 const app = express();
 // ── Middleware ────────────────────────────────────────────────────────
 // CORS: restrict to allowed origins (default: localhost only)
-const ALLOWED_ORIGINS = (process.env.CORTIVEX_ALLOWED_ORIGINS ?? 'http://localhost:3939,http://localhost:3000,http://127.0.0.1:3939,http://127.0.0.1:3000')
+const ALLOWED_ORIGINS = (process.env.CORTIVEX_ALLOWED_ORIGINS ?? 'http://localhost:3939,http://localhost:3000,http://localhost:4200,http://127.0.0.1:3939,http://127.0.0.1:3000,http://127.0.0.1:4200')
     .split(',')
     .map((o) => o.trim());
 app.use(cors({
@@ -84,24 +60,21 @@ app.use((req, _res, next) => {
 app.use('/api/pipeline', pipelineRoutes);
 // List pipelines (convenience alias)
 app.get('/api/pipelines', async (_req, res) => {
-    // Forward to the pipeline route's GET /
-    const { PipelineLoader } = await import('@cortivex/core');
-    const loader = new PipelineLoader();
     try {
+        const { PipelineLoader } = await import('@cortivex/core');
+        const loader = new PipelineLoader(process.cwd());
         const pipelines = await loader.listPipelines();
-        res.json({ pipelines });
+        res.json(pipelines);
     }
     catch (err) {
-        res.status(500).json({
-            error: 'Failed to list pipelines',
-            details: err instanceof Error ? err.message : String(err),
-        });
+        console.error('Failed to list pipelines:', err instanceof Error ? err.message : err);
+        res.json([]);
     }
 });
 // Mesh endpoints
 app.use('/api/mesh', meshRoutes);
 // Learning endpoints
-app.use('/api', learningRoutes);
+app.use('/api/learning', learningRoutes);
 // N8n export (dedicated endpoint)
 app.use('/api/export/n8n', n8nExportRoutes);
 // ── Health / Info ────────────────────────────────────────────────────
@@ -126,9 +99,10 @@ app.get('/api/info', (_req, res) => {
             'GET /api/pipelines': 'List all pipelines',
             'POST /api/pipeline/export/n8n': 'Export to n8n format',
             'GET /api/mesh': 'Get mesh state',
+            'GET /api/mesh/claims': 'Get mesh claims',
             'GET /api/mesh/conflicts': 'Get mesh conflicts',
-            'GET /api/insights': 'Get learning insights',
-            'GET /api/history': 'Get execution history',
+            'GET /api/learning/insights': 'Get learning insights',
+            'GET /api/learning/history': 'Get execution history',
             'GET /api/health': 'Health check',
             'WS /ws': 'Real-time event stream',
         },

@@ -111,7 +111,7 @@ export function CommandPalette() {
             >
               <Workflow className="mr-2 h-4 w-4 text-cortivex-cyan" />
               <span>{pipeline.name}</span>
-              <CommandShortcut>{pipeline.nodes.length} nodes</CommandShortcut>
+              <CommandShortcut>{pipeline.nodes?.length ?? 0} nodes</CommandShortcut>
             </CommandItem>
           ))}
         </CommandGroup>

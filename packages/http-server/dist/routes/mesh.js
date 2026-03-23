@@ -10,7 +10,7 @@ const router = Router();
  */
 router.get('/', async (_req, res) => {
     try {
-        const mesh = new MeshManager();
+        const mesh = new MeshManager(process.cwd());
         const state = await mesh.query();
         const activeClaims = state.claims.filter((c) => c.status === 'active');
         const agentIds = [...new Set(activeClaims.map((c) => c.agentId))];
@@ -38,10 +38,29 @@ router.get('/', async (_req, res) => {
         });
     }
     catch (err) {
-        res.status(500).json({
-            error: 'Failed to query mesh state',
-            details: err instanceof Error ? err.message : String(err),
+        console.error('Failed to query mesh state:', err instanceof Error ? err.message : err);
+        res.json({
+            claims: [],
+            agents: [],
+            conflicts: [],
+            fileOwnership: {},
+            lastCleanup: new Date().toISOString(),
         });
+    }
+});
+/**
+ * GET /api/mesh/claims
+ * Get current mesh claims only.
+ */
+router.get('/claims', async (_req, res) => {
+    try {
+        const mesh = new MeshManager(process.cwd());
+        const state = await mesh.query();
+        res.json(state.claims);
+    }
+    catch (err) {
+        console.error('Failed to query mesh claims:', err instanceof Error ? err.message : err);
+        res.json([]);
     }
 });
 /**
@@ -50,18 +69,13 @@ router.get('/', async (_req, res) => {
  */
 router.get('/conflicts', async (_req, res) => {
     try {
-        const mesh = new MeshManager();
+        const mesh = new MeshManager(process.cwd());
         const state = await mesh.query();
-        res.json({
-            conflicts: state.conflicts,
-            count: state.conflicts.length,
-        });
+        res.json(state.conflicts);
     }
     catch (err) {
-        res.status(500).json({
-            error: 'Failed to query conflicts',
-            details: err instanceof Error ? err.message : String(err),
-        });
+        console.error('Failed to query conflicts:', err instanceof Error ? err.message : err);
+        res.json([]);
     }
 });
 export default router;

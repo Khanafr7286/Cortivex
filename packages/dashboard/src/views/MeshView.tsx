@@ -229,18 +229,7 @@ export function MeshView() {
     }
   }, [storeMeshEvents]);
 
-  // If no store events after a short delay, start the internal simulation with default agents
-  useEffect(() => {
-    if (agents.length > 0) return; // Already have agents
-    const timer = setTimeout(() => {
-      if (!bootstrappedRef.current && agents.length === 0) {
-        // No WebSocket data arrived — bootstrap with default agents for demo
-        bootstrappedRef.current = true;
-        setAgents(DEFAULT_AGENTS);
-      }
-    }, 2000);
-    return () => clearTimeout(timer);
-  }, [agents.length]);
+  // No fallback — agents are only populated from WebSocket swarm events
 
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -272,7 +261,6 @@ export function MeshView() {
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const agentsRef = useRef(agents);
   agentsRef.current = agents;
-  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const fingerprint = useMemo(
     () =>
@@ -341,222 +329,9 @@ export function MeshView() {
   );
 
   /* ═══════════════════════════════════════════════════════════
-     SIMULATION — Self-running consensus protocol demo
-     Only starts once agents are populated (from store or fallback)
+     No client-side simulation — events come from the WebSocket
+     (server-side SwarmSimulator broadcasts during real pipeline runs)
      ═══════════════════════════════════════════════════════════ */
-
-  useEffect(() => {
-    // Wait until agents are populated before running the simulation
-    if (agents.length === 0) return;
-
-    const schedule = (fn: () => void, ms: number) => {
-      const t = setTimeout(fn, ms);
-      timersRef.current.push(t);
-    };
-
-    const simAgents = agentsRef.current;
-
-    function runCycle(cycle: number) {
-      const term = cycle + 1;
-      const isFirst = cycle === 0;
-      const base = isFirst ? 2500 : 0;
-
-      // ── Bootstrap (first cycle only) ──
-      if (isFirst) {
-        schedule(
-          () =>
-            addEvent(
-              'BOOTSTRAP',
-              'System',
-              `Cluster bootstrap — spawning ${simAgents.length} agents`,
-            ),
-          300,
-        );
-        simAgents.forEach((a, i) => {
-          schedule(() => {
-            addEvent('BOOTSTRAP', a.name, 'Joined cluster as follower');
-            setAgents((prev) =>
-              prev.map((ag) =>
-                ag.id === a.id
-                  ? {
-                      ...ag,
-                      tokensUsed: Math.floor(Math.random() * 2000 + 500),
-                    }
-                  : ag,
-              ),
-            );
-          }, 600 + i * 300);
-        });
-      }
-
-      // ── Pick candidate (rotate through agents) ──
-      const candidateIdx = cycle % simAgents.length;
-      const cid = simAgents[candidateIdx].id;
-      const cname = simAgents[candidateIdx].name;
-
-      // ── Election start ──
-      schedule(() => {
-        setAgents((prev) =>
-          prev.map((a) => {
-            if (a.role === 'dead') return a;
-            if (a.id === cid) return { ...a, role: 'candidate' as VisualRole };
-            return { ...a, role: 'follower' as VisualRole };
-          }),
-        );
-        setCluster({ term, leaderId: '' });
-        addEvent(
-          'ELECTION',
-          cname,
-          `Election started (term ${term}) — ${cname} is candidate`,
-        );
-      }, base);
-
-      // ── Voting ──
-      const voters = simAgents.filter((a) => a.id !== cid);
-      let votesFor = 0;
-      const needed = Math.floor(simAgents.length / 2) + 1;
-
-      voters.forEach((v, i) => {
-        schedule(() => {
-          const alive = agentsRef.current.find((a) => a.id === v.id);
-          if (!alive || alive.role === 'dead') return;
-          votesFor++;
-          spawnParticle(v.id, cid, 'vote');
-          addEvent(
-            'VOTE',
-            v.name,
-            `Voted YES for ${cname} (${votesFor}/${needed})`,
-          );
-        }, base + 800 + i * 500);
-      });
-
-      // ── Leader elected ──
-      const electTime = base + 800 + voters.length * 500 + 500;
-      schedule(() => {
-        setAgents((prev) =>
-          prev.map((a) => {
-            if (a.role === 'dead') return a;
-            if (a.id === cid)
-              return { ...a, role: 'leader' as VisualRole, status: 'working' as const };
-            return { ...a, role: 'follower' as VisualRole, status: 'working' as const };
-          }),
-        );
-        setCluster({ term, leaderId: cid });
-        addEvent(
-          'LEADER',
-          cname,
-          `Elected LEADER (term ${term}, ${needed}/${simAgents.length} quorum)`,
-        );
-      }, electTime);
-
-      // ── Quorum check ──
-      schedule(() => {
-        const alive = agentsRef.current.filter(
-          (a) => a.role !== 'dead',
-        ).length;
-        addEvent(
-          'QUORUM',
-          'System',
-          `Quorum: ${alive}/${simAgents.length} alive — QUORUM MET`,
-        );
-      }, electTime + 500);
-
-      // ── Heartbeats (5 rounds) ──
-      for (let hb = 0; hb < 5; hb++) {
-        schedule(() => {
-          const cur = agentsRef.current;
-          const leader = cur.find((a) => a.role === 'leader');
-          if (!leader) return;
-          const followers = cur.filter((a) => a.role === 'follower');
-          followers.forEach((f) => spawnParticle(leader.id, f.id, 'heartbeat'));
-          addEvent(
-            'HEARTBEAT',
-            leader.name,
-            `Heartbeat [leader] — ${fmtTok(leader.tokensUsed)} tokens`,
-          );
-          // Increment tokens
-          setAgents((prev) =>
-            prev.map((a) =>
-              a.role !== 'dead'
-                ? {
-                    ...a,
-                    tokensUsed:
-                      a.tokensUsed + Math.floor(Math.random() * 3000 + 800),
-                  }
-                : a,
-            ),
-          );
-        }, electTime + 1500 + hb * 2500);
-      }
-
-      // ── Send task particles between followers during steady state ──
-      for (let tp = 0; tp < 3; tp++) {
-        schedule(() => {
-          const cur = agentsRef.current;
-          const followers = cur.filter((a) => a.role === 'follower');
-          if (followers.length >= 2) {
-            const i1 = Math.floor(Math.random() * followers.length);
-            let i2 = Math.floor(Math.random() * (followers.length - 1));
-            if (i2 >= i1) i2++;
-            spawnParticle(followers[i1].id, followers[i2].id, 'task');
-            addEvent(
-              'TASK',
-              followers[i1].name,
-              `Synced findings with ${followers[i2].name}`,
-            );
-          }
-        }, electTime + 3000 + tp * 4000);
-      }
-
-      // ── Leader death ──
-      const deathTime = electTime + 1500 + 5 * 2500 + 1000;
-      schedule(() => {
-        const leader = agentsRef.current.find((a) => a.role === 'leader');
-        if (!leader) return;
-        setAgents((prev) =>
-          prev.map((a) =>
-            a.id === leader.id
-              ? { ...a, role: 'dead' as VisualRole, status: 'dead' as const, health: 0 }
-              : a,
-          ),
-        );
-        addEvent('DEATH', leader.name, 'DIED (heartbeat timeout) — was LEADER');
-      }, deathTime);
-
-      // ── Monitor alert ──
-      schedule(() => {
-        addEvent(
-          'DEATH',
-          'Monitor',
-          'ALERT: Leader unresponsive (timeout exceeded)',
-        );
-      }, deathTime + 1200);
-
-      // ── Respawn + next cycle ──
-      schedule(() => {
-        const dead = agentsRef.current.find((a) => a.role === 'dead');
-        if (dead) {
-          setAgents((prev) =>
-            prev.map((a) =>
-              a.id === dead.id
-                ? { ...a, role: 'follower' as VisualRole, status: 'idle' as const, health: 1 }
-                : a,
-            ),
-          );
-          addEvent('RESPAWN', dead.name, 'Respawned as follower');
-        }
-        schedule(() => runCycle(cycle + 1), 1000);
-      }, deathTime + 2500);
-    }
-
-    runCycle(0);
-
-    return () => {
-      timersRef.current.forEach(clearTimeout);
-      timersRef.current = [];
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agents.length]);
 
   /* ═══════════════════════════════════════════════════════════
      EFFECT 1: One-time SVG + Canvas setup
@@ -1165,115 +940,140 @@ export function MeshView() {
   const deadCount = agents.filter((a) => a.role === 'dead').length;
   const leader = agents.find((a) => a.role === 'leader');
 
+  const hasAgents = agents.length > 0;
+
   return (
     <div className="w-full h-full relative">
-      {/* Main visualization area */}
-      <div
-        ref={containerRef}
-        className="absolute inset-0"
-        style={{
-          right: panelOpen ? 320 : 0,
-          transition: 'right 0.3s ease',
-        }}
-      >
-        <svg
-          ref={svgRef}
-          className="absolute inset-0"
-          style={{ zIndex: 1 }}
-        />
-        <canvas
-          ref={canvasRef}
-          className="absolute inset-0 pointer-events-none"
-          style={{ zIndex: 2 }}
-        />
-      </div>
-
-      {/* Legend */}
-      <div className="absolute top-4 left-4 z-10 panel p-3">
-        <div className="text-label uppercase text-text-muted mb-2 font-mono">
-          Nodes
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <LegendItem color="#E8A44A" label="Leader" />
-          <LegendItem color="#4F8EF7" label="Follower" />
-          <LegendItem color="#E8A44A" label="Candidate" dashed />
-          <LegendItem
-            color="#E05C5C"
-            label={`Dead${deadCount > 0 ? ` (${deadCount})` : ''}`}
-          />
-          <div className="h-px bg-canvas-border my-1" />
-          <div className="text-label uppercase text-text-muted mb-1 font-mono">
-            Particles
-          </div>
-          <ParticleItem color="#E8A44A" label="Vote" />
-          <ParticleItem color="#5A6478" label="Heartbeat" />
-          <ParticleItem color="#4F8EF7" label="Task" />
-          <ParticleItem color="#3DD68C" label="Knowledge" />
-        </div>
-      </div>
-
-      {/* Stats badge */}
-      <div
-        className="absolute top-4 z-10 panel px-4 py-2.5"
-        style={{
-          right: panelOpen ? 336 : 16,
-          transition: 'right 0.3s ease',
-        }}
-      >
-        <span className="text-cortivex-cyan font-mono font-bold text-lg mr-1">
-          {aliveCount}
-        </span>
-        <span className="text-text-muted font-mono text-xs">
-          active agents
-        </span>
-        {leader && (
-          <div className="text-warning-amber font-mono text-[10px] mt-0.5">
-            Leader: {leader.name} (term {cluster.term})
-          </div>
-        )}
-        {!leader && cluster.term > 0 && (
-          <div className="text-error-coral font-mono text-[10px] mt-0.5 animate-pulse-alive">
-            ELECTION IN PROGRESS (term {cluster.term})
-          </div>
-        )}
-      </div>
-
-      {/* Election banner */}
-      <AnimatePresence>
-        {agents.some((a) => a.role === 'candidate') && (
-          <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="absolute top-16 left-1/2 -translate-x-1/2 z-10 panel px-6 py-2 border border-warning-amber/30"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-2 h-2 rounded-full bg-warning-amber animate-pulse-alive" />
-              <span className="text-warning-amber font-mono text-xs font-bold uppercase tracking-wider">
-                Leader Election in Progress
-              </span>
-              <span className="text-text-muted font-mono text-[10px]">
-                Term {cluster.term}
-              </span>
+      {/* Empty state — shown when no pipeline is running */}
+      {!hasAgents && (
+        <div className="absolute inset-0 flex items-center justify-center z-10">
+          <div className="text-center max-w-md px-6">
+            <div className="w-16 h-16 mx-auto mb-5 rounded-2xl bg-surface-light border border-canvas-border flex items-center justify-center">
+              <Activity size={28} className="text-text-dim" />
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            <h2 className="text-text-primary font-mono text-sm font-semibold mb-2">
+              No active agents
+            </h2>
+            <p className="text-text-muted font-mono text-xs leading-relaxed">
+              Run a pipeline to see real-time coordination.
+              Agent consensus, elections, and task distribution
+              will appear here during execution.
+            </p>
+          </div>
+        </div>
+      )}
 
-      {/* Event panel toggle */}
-      <button
-        onClick={() => setPanelOpen(!panelOpen)}
-        className="absolute top-1/2 -translate-y-1/2 z-20 w-6 h-12 rounded-l-lg bg-surface-light border border-canvas-border border-r-0 flex items-center justify-center text-text-muted hover:text-text-primary transition-colors"
-        style={{
-          right: panelOpen ? 320 : 0,
-          transition: 'right 0.3s ease',
-        }}
-      >
-        {panelOpen ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
-      </button>
+      {/* Main visualization area — only rendered when agents exist */}
+      {hasAgents && (
+        <>
+          <div
+            ref={containerRef}
+            className="absolute inset-0"
+            style={{
+              right: panelOpen ? 320 : 0,
+              transition: 'right 0.3s ease',
+            }}
+          >
+            <svg
+              ref={svgRef}
+              className="absolute inset-0"
+              style={{ zIndex: 1 }}
+            />
+            <canvas
+              ref={canvasRef}
+              className="absolute inset-0 pointer-events-none"
+              style={{ zIndex: 2 }}
+            />
+          </div>
 
-      {/* Event panel */}
-      <EventPanel events={events} open={panelOpen} />
+          {/* Legend */}
+          <div className="absolute top-4 left-4 z-10 panel p-3">
+            <div className="text-label uppercase text-text-muted mb-2 font-mono">
+              Nodes
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <LegendItem color="#E8A44A" label="Leader" />
+              <LegendItem color="#4F8EF7" label="Follower" />
+              <LegendItem color="#E8A44A" label="Candidate" dashed />
+              <LegendItem
+                color="#E05C5C"
+                label={`Dead${deadCount > 0 ? ` (${deadCount})` : ''}`}
+              />
+              <div className="h-px bg-canvas-border my-1" />
+              <div className="text-label uppercase text-text-muted mb-1 font-mono">
+                Particles
+              </div>
+              <ParticleItem color="#E8A44A" label="Vote" />
+              <ParticleItem color="#5A6478" label="Heartbeat" />
+              <ParticleItem color="#4F8EF7" label="Task" />
+              <ParticleItem color="#3DD68C" label="Knowledge" />
+            </div>
+          </div>
+
+          {/* Stats badge */}
+          <div
+            className="absolute top-4 z-10 panel px-4 py-2.5"
+            style={{
+              right: panelOpen ? 336 : 16,
+              transition: 'right 0.3s ease',
+            }}
+          >
+            <span className="text-cortivex-cyan font-mono font-bold text-lg mr-1">
+              {aliveCount}
+            </span>
+            <span className="text-text-muted font-mono text-xs">
+              active agents
+            </span>
+            {leader && (
+              <div className="text-warning-amber font-mono text-[10px] mt-0.5">
+                Leader: {leader.name} (term {cluster.term})
+              </div>
+            )}
+            {!leader && cluster.term > 0 && (
+              <div className="text-error-coral font-mono text-[10px] mt-0.5 animate-pulse-alive">
+                ELECTION IN PROGRESS (term {cluster.term})
+              </div>
+            )}
+          </div>
+
+          {/* Election banner */}
+          <AnimatePresence>
+            {agents.some((a) => a.role === 'candidate') && (
+              <motion.div
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="absolute top-16 left-1/2 -translate-x-1/2 z-10 panel px-6 py-2 border border-warning-amber/30"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-2 h-2 rounded-full bg-warning-amber animate-pulse-alive" />
+                  <span className="text-warning-amber font-mono text-xs font-bold uppercase tracking-wider">
+                    Leader Election in Progress
+                  </span>
+                  <span className="text-text-muted font-mono text-[10px]">
+                    Term {cluster.term}
+                  </span>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Event panel toggle */}
+          <button
+            onClick={() => setPanelOpen(!panelOpen)}
+            className="absolute top-1/2 -translate-y-1/2 z-20 w-6 h-12 rounded-l-lg bg-surface-light border border-canvas-border border-r-0 flex items-center justify-center text-text-muted hover:text-text-primary transition-colors"
+            style={{
+              right: panelOpen ? 320 : 0,
+              transition: 'right 0.3s ease',
+            }}
+          >
+            {panelOpen ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+          </button>
+
+          {/* Event panel */}
+          <EventPanel events={events} open={panelOpen} />
+        </>
+      )}
     </div>
   );
 }

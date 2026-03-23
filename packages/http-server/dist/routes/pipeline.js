@@ -5,7 +5,7 @@ import { Router } from 'express';
 import { PipelineExecutor, PipelineLoader, generatePipeline, serializePipelineYaml, exportToN8n, } from '@cortivex/core';
 import { attachExecutorEvents } from '../ws/handler.js';
 import { swarmSimulator } from '../swarm/simulator.js';
-import { validatePipelineName } from '../index.js';
+import { validatePipelineName } from '../validation.js';
 const router = Router();
 // In-memory run tracking
 const activeRuns = new Map();
@@ -41,6 +41,7 @@ router.post('/run', async (req, res) => {
             pipelineDef = await loader.load(pipeline);
         }
         catch {
+            // Pipeline not found by name — try parsing as inline YAML/JSON
             try {
                 pipelineDef = loader.loadFromString(pipeline);
             }
@@ -130,8 +131,9 @@ router.post('/create', async (req, res) => {
         try {
             savedPath = await store.save(pipelineDef);
         }
-        catch {
-            // Non-fatal — pipeline was still generated
+        catch (err) {
+            // Non-fatal — pipeline was still generated, but log so operators notice persistence failures
+            console.error('Failed to save pipeline to disk:', err instanceof Error ? err.message : err);
         }
         res.json({
             name: pipelineDef.name,
@@ -187,20 +189,18 @@ router.get('/status/:runId', (req, res) => {
     res.status(404).json({ error: `Run "${runId}" not found` });
 });
 /**
- * GET /api/pipelines
+ * GET /api/pipeline
  * List available pipelines.
  */
 router.get('/', async (_req, res) => {
     try {
-        const loader = new PipelineLoader();
+        const loader = new PipelineLoader(process.cwd());
         const pipelines = await loader.listPipelines();
-        res.json({ pipelines });
+        res.json(pipelines);
     }
     catch (err) {
-        res.status(500).json({
-            error: 'Failed to list pipelines',
-            details: err instanceof Error ? err.message : String(err),
-        });
+        console.error('Failed to list pipelines:', err instanceof Error ? err.message : err);
+        res.json([]);
     }
 });
 /**
@@ -230,6 +230,7 @@ router.post('/export/n8n', async (req, res) => {
             pipelineDef = await loader.load(pipeline);
         }
         catch {
+            // Pipeline not found by name — try parsing as inline YAML/JSON
             try {
                 pipelineDef = loader.loadFromString(pipeline);
             }

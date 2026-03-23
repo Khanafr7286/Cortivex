@@ -220,19 +220,17 @@ router.get('/status/:runId', (req, res) => {
 });
 
 /**
- * GET /api/pipelines
+ * GET /api/pipeline
  * List available pipelines.
  */
 router.get('/', async (_req, res) => {
   try {
-    const loader = new PipelineLoader();
+    const loader = new PipelineLoader(process.cwd());
     const pipelines = await loader.listPipelines();
-    res.json({ pipelines });
+    res.json(pipelines);
   } catch (err) {
-    res.status(500).json({
-      error: 'Failed to list pipelines',
-      details: err instanceof Error ? err.message : String(err),
-    });
+    console.error('Failed to list pipelines:', err instanceof Error ? err.message : err);
+    res.json([]);
   }
 });
 

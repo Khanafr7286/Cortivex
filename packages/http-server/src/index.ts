@@ -72,17 +72,14 @@ app.use('/api/pipeline', pipelineRoutes);
 
 // List pipelines (convenience alias)
 app.get('/api/pipelines', async (_req, res) => {
-  // Forward to the pipeline route's GET /
-  const { PipelineLoader } = await import('@cortivex/core');
-  const loader = new PipelineLoader();
   try {
+    const { PipelineLoader } = await import('@cortivex/core');
+    const loader = new PipelineLoader(process.cwd());
     const pipelines = await loader.listPipelines();
-    res.json({ pipelines });
+    res.json(pipelines);
   } catch (err) {
-    res.status(500).json({
-      error: 'Failed to list pipelines',
-      details: err instanceof Error ? err.message : String(err),
-    });
+    console.error('Failed to list pipelines:', err instanceof Error ? err.message : err);
+    res.json([]);
   }
 });
 
@@ -90,7 +87,7 @@ app.get('/api/pipelines', async (_req, res) => {
 app.use('/api/mesh', meshRoutes);
 
 // Learning endpoints
-app.use('/api', learningRoutes);
+app.use('/api/learning', learningRoutes);
 
 // N8n export (dedicated endpoint)
 app.use('/api/export/n8n', n8nExportRoutes);
@@ -119,9 +116,10 @@ app.get('/api/info', (_req, res) => {
       'GET /api/pipelines': 'List all pipelines',
       'POST /api/pipeline/export/n8n': 'Export to n8n format',
       'GET /api/mesh': 'Get mesh state',
+      'GET /api/mesh/claims': 'Get mesh claims',
       'GET /api/mesh/conflicts': 'Get mesh conflicts',
-      'GET /api/insights': 'Get learning insights',
-      'GET /api/history': 'Get execution history',
+      'GET /api/learning/insights': 'Get learning insights',
+      'GET /api/learning/history': 'Get execution history',
       'GET /api/health': 'Health check',
       'WS /ws': 'Real-time event stream',
     },

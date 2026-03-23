@@ -19,7 +19,6 @@ import {
   demoInsights,
   demoMeshClaims,
   demoMeshConflicts,
-  demoMeshEvents,
   demoSuggestions,
   createLiveExecution,
 } from '@/lib/demo-data';
@@ -170,17 +169,17 @@ export const useCortivexStore = create<CortivexState>((set, get) => ({
           apiFetchHistory().catch(() => demoHistory),
         ]);
     } else {
-      console.warn('[Cortivex] HTTP server offline — using demo data');
+      console.warn('[Cortivex] HTTP server offline — using template pipelines, empty live state');
       pipelines = demoPipelines;
-      meshClaims = demoMeshClaims;
-      meshConflicts = demoMeshConflicts;
-      insights = demoInsights;
-      history = demoHistory;
+      meshClaims = [] as MeshClaim[];
+      meshConflicts = [] as MeshConflict[];
+      insights = [] as Insight[];
+      history = [] as ExecutionRecord[];
     }
 
-    // If no mesh events came from API, use demo events as seed
-    const meshEvents = demoMeshEvents;
-    const suggestions = demoSuggestions;
+    // Mesh events and suggestions come from WebSocket / real runs only
+    const meshEvents: MeshEvent[] = [];
+    const suggestions: Suggestion[] = [];
 
     const activePipeline = pipelines.length > 0 ? pipelines[0] : null;
 
