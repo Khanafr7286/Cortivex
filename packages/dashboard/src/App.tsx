@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 
 // Error boundary to prevent component crashes from killing the whole app
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
@@ -40,7 +40,17 @@ const pageTransition = {
 };
 
 export default function App() {
-  const { activeView, setConnected, isLoading, fetchInitialData } = useCortivexStore();
+  // Manual subscription to force re-renders on activeView change
+  const [activeView, setLocalActiveView] = useState(useCortivexStore.getState().activeView);
+  useEffect(() => {
+    return useCortivexStore.subscribe((state) => {
+      setLocalActiveView(state.activeView);
+    });
+  }, []);
+
+  const setConnected = useCortivexStore((s) => s.setConnected);
+  const isLoading = useCortivexStore((s) => s.isLoading);
+  const fetchInitialData = useCortivexStore((s) => s.fetchInitialData);
 
   const handleWSEvent = useCallback(
     (event: WSEvent) => {
@@ -211,15 +221,7 @@ export default function App() {
 
             {/* Main Content */}
             <main className="flex-1 overflow-hidden relative">
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={activeView}
-                  className="h-full"
-                  {...pageTransition}
-                >
-                  <ActiveView />
-                </motion.div>
-              </AnimatePresence>
+              <ActiveView key={activeView} />
             </main>
           </div>
 
