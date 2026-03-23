@@ -34,12 +34,12 @@ import { cn } from '@/lib/utils';
 
 export function PipelineEditorView() {
   const {
-    editorNodes,
-    editorConnections,
+    editorNodes: rawEditorNodes,
+    editorConnections: rawEditorConnections,
     editorPipelineName,
     selectedNode,
     isConfigPanelOpen,
-    pipelines,
+    pipelines: rawPipelines,
     selectNode,
     addEditorNode,
     addEditorConnection,
@@ -51,6 +51,11 @@ export function PipelineEditorView() {
     loadPipelineIntoEditor,
     runPipeline,
   } = useCortivexStore();
+
+  // Safe defaults for API data that may lack full pipeline definitions
+  const editorNodes = rawEditorNodes ?? [];
+  const editorConnections = rawEditorConnections ?? [];
+  const pipelines = Array.isArray(rawPipelines) ? rawPipelines : [];
 
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
   const [isDragging, setIsDragging] = useState(false);
@@ -67,7 +72,7 @@ export function PipelineEditorView() {
     mouseY: number;
   } | null>(null);
 
-  const selectedNodeData = editorNodes.find((n) => n.id === selectedNode);
+  const selectedNodeData = (editorNodes ?? []).find((n) => n.id === selectedNode);
 
   // Canvas zoom
   const handleWheel = useCallback(

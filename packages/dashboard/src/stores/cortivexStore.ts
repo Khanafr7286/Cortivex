@@ -158,16 +158,37 @@ export const useCortivexStore = create<CortivexState>((set, get) => ({
 
     let pipelines, meshClaims, meshConflicts, insights, history;
 
+    // Normalize API history records (core uses totalCost/totalDuration, dashboard uses cost/duration)
+    function normalizeHistory(raw: ExecutionRecord[]): ExecutionRecord[] {
+      return raw.map((r, i) => {
+        const rec = r as unknown as Record<string, unknown>;
+        return {
+          id: r.id ?? `run-${i}`,
+          pipelineName: (rec['pipeline'] as string) ?? r.pipelineName ?? 'unknown',
+          runNumber: r.runNumber ?? i + 1,
+          timestamp: r.timestamp ?? new Date().toISOString(),
+          duration: (rec['totalDuration'] as number) ?? r.duration ?? 0,
+          cost: (rec['totalCost'] as number) ?? r.cost ?? 0,
+          tokensUsed: r.tokensUsed ?? 0,
+          success: r.success ?? false,
+          nodesRun: Array.isArray(rec['nodeResults']) ? (rec['nodeResults'] as unknown[]).length : r.nodesRun ?? 0,
+          nodesFailed: r.nodesFailed ?? 0,
+          filesModified: r.filesModified ?? 0,
+        };
+      });
+    }
+
     if (serverOnline) {
       // Fetch all endpoints in parallel
       [pipelines, meshClaims, meshConflicts, insights, history] =
         await Promise.all([
           apiFetchPipelines().catch(() => demoPipelines),
-          apiFetchMeshClaims().catch(() => demoMeshClaims),
-          apiFetchMeshConflicts().catch(() => demoMeshConflicts),
-          apiFetchInsights().catch(() => demoInsights),
-          apiFetchHistory().catch(() => demoHistory),
+          apiFetchMeshClaims().catch(() => [] as MeshClaim[]),
+          apiFetchMeshConflicts().catch(() => [] as MeshConflict[]),
+          apiFetchInsights().catch(() => [] as Insight[]),
+          apiFetchHistory().catch(() => [] as ExecutionRecord[]),
         ]);
+      history = normalizeHistory(history);
     } else {
       console.warn('[Cortivex] HTTP server offline — using template pipelines, empty live state');
       pipelines = demoPipelines;
@@ -192,9 +213,9 @@ export const useCortivexStore = create<CortivexState>((set, get) => ({
       insights,
       history,
       suggestions,
-      editorNodes: activePipeline ? activePipeline.nodes : [],
-      editorConnections: activePipeline ? activePipeline.connections : [],
-      editorPipelineName: activePipeline ? activePipeline.name : '',
+      editorNodes: activePipeline?.nodes ?? [],
+      editorConnections: activePipeline?.connections ?? [],
+      editorPipelineName: activePipeline?.name ?? '',
       isLoading: false,
     });
   },
@@ -340,8 +361,8 @@ export const useCortivexStore = create<CortivexState>((set, get) => ({
   loadPipelineIntoEditor: (pipeline) => {
     set({
       activePipeline: pipeline,
-      editorNodes: pipeline.nodes.map((n) => ({ ...n })),
-      editorConnections: pipeline.connections.map((c) => ({ ...c })),
+      editorNodes: (pipeline.nodes ?? []).map((n) => ({ ...n })),
+      editorConnections: (pipeline.connections ?? []).map((c) => ({ ...c })),
       editorPipelineName: pipeline.name,
       selectedNode: null,
       isConfigPanelOpen: false,
