@@ -366,6 +366,7 @@ export class PipelineExecutor extends EventEmitter {
             return true;
         }
         catch {
+            // Signal file doesn't exist — no stop requested
             return false;
         }
     }

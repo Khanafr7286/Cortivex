@@ -53,7 +53,7 @@ export class MeshManager {
             await rename(tempPath, targetPath);
         }
         catch {
-            // On Windows, rename may fail if target exists; try unlink then rename
+            // On Windows, rename fails if target exists — remove then retry
             try {
                 await unlink(targetPath);
             }
@@ -165,7 +165,7 @@ export class MeshManager {
                             removed++;
                         }
                         catch {
-                            // Ignore
+                            // Temp file already removed by another process
                         }
                     }
                     continue;
@@ -186,7 +186,7 @@ export class MeshManager {
                         removed++;
                     }
                     catch {
-                        // Ignore
+                        // File already removed or locked by another process
                     }
                 }
             }
@@ -209,8 +209,9 @@ export class MeshManager {
             claim.lastUpdate = new Date().toISOString();
             await writeFile(filePath, JSON.stringify(claim, null, 2), 'utf-8');
         }
-        catch {
-            // File might not exist
+        catch (error) {
+            // Claim file may not exist if agent was already released
+            console.error(`Failed to update mesh claim status for agent "${safeAgentId}":`, error instanceof Error ? error.message : error);
         }
     }
     /**
@@ -224,6 +225,7 @@ export class MeshManager {
             return JSON.parse(content);
         }
         catch {
+            // Claim file doesn't exist or is unreadable
             return null;
         }
     }

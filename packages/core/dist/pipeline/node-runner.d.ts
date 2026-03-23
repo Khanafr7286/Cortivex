@@ -21,6 +21,8 @@ export declare class NodeRunner extends EventEmitter<NodeRunnerEvents> {
     runLightNode(node: NodeDefinition, nodeType: NodeType, context: NodeRunContext): Promise<NodeExecutionResult>;
     runShellNode(node: NodeDefinition, nodeType: NodeType, context: NodeRunContext): Promise<NodeExecutionResult>;
     private buildPrompt;
+    private sanitizeCommand;
+    private parseCommand;
     private handleStreamMessage;
 }
 interface NodeExecutionResult {

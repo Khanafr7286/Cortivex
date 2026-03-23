@@ -70,55 +70,106 @@ export class NodeRunner extends EventEmitter {
                 '--output-format', 'json',
                 '--model', model,
                 '--no-session-persistence',
-                '-p', prompt,
+                '--max-budget-usd', '2',
             ];
             // Add allowedTools if specified
             if (nodeType.tools.length > 0) {
                 args.push('--allowedTools', nodeType.tools.join(','));
             }
-            // Add max budget to prevent runaway costs
-            args.push('--max-budget-usd', '2');
+            // Use stdin to pipe the prompt instead of -p flag.
+            // Long prompts with special characters get mangled by Windows shell
+            // when passed as command-line args with shell:true.
             const child = spawn('claude', args, {
                 cwd: context.targetDir,
                 env: { ...process.env },
                 shell: true,
                 stdio: ['pipe', 'pipe', 'pipe'],
             });
+            // Write prompt to stdin and close it — Claude CLI reads from stdin
+            child.stdin.write(prompt);
+            child.stdin.end();
             let fullOutput = '';
             const filesModified = [];
+            let lineCount = 0;
+            let isResolved = false;
+            const cleanup = () => {
+                if (child) {
+                    child.removeAllListeners();
+                }
+                clearTimeout(timeoutTimer);
+            };
             const timeoutTimer = setTimeout(() => {
-                child.kill('SIGTERM');
-                reject(new Error(`Node "${node.id}" timed out after ${this.timeout / 1000}s`));
+                if (!isResolved && child && !child.killed) {
+                    child.kill('SIGTERM');
+                    isResolved = true;
+                    cleanup();
+                    reject(new Error(`Node "${node.id}" timed out after ${this.timeout / 1000}s`));
+                }
             }, this.timeout);
-            // Emit progress periodically while running
-            const progressTimer = setInterval(() => {
-                this.emit('progress', node.id, 50, 'Claude agent working...');
-            }, 3000);
             child.stdout.on('data', (data) => {
-                fullOutput += data.toString();
+                const text = data.toString();
+                fullOutput += text;
+                // Parse streaming JSON lines for real-time progress
+                const lines = text.split('\n').filter(Boolean);
+                for (const line of lines) {
+                    lineCount++;
+                    try {
+                        const msg = JSON.parse(line);
+                        // Real Claude CLI streaming events
+                        if (msg.type === 'assistant' && msg.message?.content) {
+                            for (const block of msg.message.content) {
+                                if (block.type === 'text' && block.text) {
+                                    const preview = block.text.substring(0, 120).replace(/\n/g, ' ');
+                                    this.emit('progress', node.id, Math.min(90, lineCount * 5), preview);
+                                }
+                                else if (block.type === 'tool_use') {
+                                    this.emit('progress', node.id, Math.min(90, lineCount * 5), `Using ${block.name}: ${JSON.stringify(block.input).substring(0, 80)}`);
+                                }
+                            }
+                        }
+                        else if (msg.type === 'tool_result' || msg.type === 'tool_output') {
+                            this.emit('progress', node.id, Math.min(90, lineCount * 5), 'Processing tool result...');
+                        }
+                        else if (msg.type === 'result') {
+                            // Final result — extract cost/tokens immediately
+                            this.emit('progress', node.id, 95, 'Finalizing...');
+                        }
+                    }
+                    catch {
+                        // Not JSON — might be raw text output
+                        const trimmed = text.trim();
+                        if (trimmed.length > 0 && trimmed.length < 200) {
+                            this.emit('progress', node.id, Math.min(90, lineCount * 5), trimmed);
+                        }
+                    }
+                }
             });
             child.stderr.on('data', (data) => {
-                const text = data.toString();
-                if (context.verbose) {
+                const text = data.toString().trim();
+                if (text) {
                     this.emit('output', node.id, `[stderr] ${text}`);
                 }
             });
             child.on('close', (code) => {
-                clearTimeout(timeoutTimer);
-                clearInterval(progressTimer);
+                if (isResolved)
+                    return;
+                isResolved = true;
+                cleanup();
                 // Parse the JSON result from stdout
                 let totalCost = 0;
                 let totalTokens = 0;
                 let resultText = '';
-                // Find the last JSON object in stdout (the result)
+                // Find ALL JSON objects in stdout — look for "type":"result" anywhere
+                // Claude CLI may output multiple JSON lines (tool calls + final result)
+                // or a single JSON blob. Handle both cases.
                 const lines = fullOutput.split('\n').filter(Boolean);
                 for (let i = lines.length - 1; i >= 0; i--) {
                     try {
                         const parsed = JSON.parse(lines[i]);
                         if (parsed.type === 'result') {
-                            resultText = parsed.result || '';
-                            totalCost = parsed.total_cost_usd || 0;
-                            // Sum up tokens from usage
+                            resultText = parsed.result || parsed.text || '';
+                            totalCost = parsed.total_cost_usd ?? parsed.cost_usd ?? 0;
+                            // Sum up tokens from usage (multiple possible formats)
                             const usage = parsed.usage || {};
                             totalTokens = (usage.input_tokens || 0) +
                                 (usage.output_tokens || 0) +
@@ -128,8 +179,27 @@ export class NodeRunner extends EventEmitter {
                         }
                     }
                     catch {
-                        // Not JSON, skip
+                        // Not JSON — try to find JSON embedded in the line
+                        const jsonMatch = lines[i].match(/\{.*"type"\s*:\s*"result".*\}/);
+                        if (jsonMatch) {
+                            try {
+                                const parsed = JSON.parse(jsonMatch[0]);
+                                resultText = parsed.result || '';
+                                totalCost = parsed.total_cost_usd ?? 0;
+                                const usage = parsed.usage || {};
+                                totalTokens = (usage.input_tokens || 0) +
+                                    (usage.output_tokens || 0) +
+                                    (usage.cache_read_input_tokens || 0) +
+                                    (usage.cache_creation_input_tokens || 0);
+                                break;
+                            }
+                            catch { /* skip */ }
+                        }
                     }
+                }
+                // Fallback: if we didn't find a result JSON but have output, use raw text
+                if (!resultText && fullOutput.trim()) {
+                    resultText = fullOutput.trim().substring(0, 10000);
                 }
                 if (code !== 0 && code !== null && !resultText) {
                     reject(new Error(`Claude CLI exited with code ${code} for node "${node.id}".\nOutput: ${fullOutput.slice(0, 500)}`));
@@ -151,8 +221,10 @@ export class NodeRunner extends EventEmitter {
                 });
             });
             child.on('error', (err) => {
-                clearTimeout(timeoutTimer);
-                clearInterval(progressTimer);
+                if (isResolved)
+                    return;
+                isResolved = true;
+                cleanup();
                 reject(new Error(`Failed to spawn Claude CLI for node "${node.id}": ${err.message}. ` +
                     `Ensure Claude CLI is installed and available in PATH.`));
             });
@@ -163,18 +235,32 @@ export class NodeRunner extends EventEmitter {
         const prompt = this.buildPrompt(node, nodeType, context);
         // Use Claude CLI in non-streaming mode for light nodes
         return new Promise((resolve, reject) => {
-            const args = ['--print', '--output-format', 'json', '--model', model, '-p', prompt];
+            const args = ['--print', '--output-format', 'json', '--model', model];
             const child = spawn('claude', args, {
                 cwd: context.targetDir,
                 env: { ...process.env },
                 shell: true,
                 stdio: ['pipe', 'pipe', 'pipe'],
             });
+            // Pipe prompt via stdin to avoid shell escaping issues
+            child.stdin.write(prompt);
+            child.stdin.end();
             let stdout = '';
             let stderr = '';
+            let isResolved = false;
+            const cleanup = () => {
+                if (child) {
+                    child.removeAllListeners();
+                }
+                clearTimeout(timeoutTimer);
+            };
             const timeoutTimer = setTimeout(() => {
-                child.kill('SIGTERM');
-                reject(new Error(`Light node "${node.id}" timed out after ${this.timeout / 1000}s`));
+                if (!isResolved && child && !child.killed) {
+                    child.kill('SIGTERM');
+                    isResolved = true;
+                    cleanup();
+                    reject(new Error(`Light node "${node.id}" timed out after ${this.timeout / 1000}s`));
+                }
             }, this.timeout);
             child.stdout.on('data', (data) => {
                 stdout += data.toString();
@@ -183,7 +269,10 @@ export class NodeRunner extends EventEmitter {
                 stderr += data.toString();
             });
             child.on('close', (code) => {
-                clearTimeout(timeoutTimer);
+                if (isResolved)
+                    return;
+                isResolved = true;
+                cleanup();
                 if (code !== 0 && code !== null) {
                     reject(new Error(`Light node "${node.id}" failed (exit code ${code}): ${stderr.slice(0, 500)}`));
                     return;
@@ -197,8 +286,8 @@ export class NodeRunner extends EventEmitter {
                     try {
                         const parsed = JSON.parse(lines[i]);
                         if (parsed.type === 'result') {
-                            resultText = parsed.result || '';
-                            totalCost = parsed.total_cost_usd || 0;
+                            resultText = parsed.result || parsed.text || '';
+                            totalCost = parsed.total_cost_usd ?? parsed.cost_usd ?? 0;
                             const usage = parsed.usage || {};
                             totalTokens = (usage.input_tokens || 0) +
                                 (usage.output_tokens || 0) +
@@ -211,6 +300,9 @@ export class NodeRunner extends EventEmitter {
                         // Not JSON, skip
                     }
                 }
+                if (!resultText && stdout.trim()) {
+                    resultText = stdout.trim().substring(0, 10000);
+                }
                 this.emit('progress', node.id, 100, 'Done');
                 resolve({
                     output: resultText || stdout,
@@ -220,7 +312,10 @@ export class NodeRunner extends EventEmitter {
                 });
             });
             child.on('error', (err) => {
-                clearTimeout(timeoutTimer);
+                if (isResolved)
+                    return;
+                isResolved = true;
+                cleanup();
                 reject(new Error(`Failed to run light node "${node.id}": ${err.message}`));
             });
         });
@@ -230,18 +325,32 @@ export class NodeRunner extends EventEmitter {
         if (!command) {
             throw new Error(`Shell node "${node.id}" requires a "command" in its config.`);
         }
+        // Validate and sanitize command to prevent shell injection
+        const sanitizedCommand = this.sanitizeCommand(command);
+        const { executable, args } = this.parseCommand(sanitizedCommand);
         return new Promise((resolve, reject) => {
-            const child = spawn(command, {
+            const child = spawn(executable, args, {
                 cwd: context.targetDir,
                 env: { ...process.env },
-                shell: true,
-                stdio: ['pipe', 'pipe', 'pipe'],
+                shell: false, // Disable shell to prevent injection
+                stdio: ['ignore', 'pipe', 'pipe'],
             });
             let stdout = '';
             let stderr = '';
+            let isResolved = false;
+            const cleanup = () => {
+                if (child) {
+                    child.removeAllListeners();
+                }
+                clearTimeout(timeoutTimer);
+            };
             const timeoutTimer = setTimeout(() => {
-                child.kill('SIGTERM');
-                reject(new Error(`Shell node "${node.id}" timed out after ${this.timeout / 1000}s`));
+                if (!isResolved && child && !child.killed) {
+                    child.kill('SIGTERM');
+                    isResolved = true;
+                    cleanup();
+                    reject(new Error(`Shell node "${node.id}" timed out after ${this.timeout / 1000}s`));
+                }
             }, this.timeout);
             child.stdout.on('data', (data) => {
                 const text = data.toString();
@@ -252,7 +361,10 @@ export class NodeRunner extends EventEmitter {
                 stderr += data.toString();
             });
             child.on('close', (code) => {
-                clearTimeout(timeoutTimer);
+                if (isResolved)
+                    return;
+                isResolved = true;
+                cleanup();
                 resolve({
                     output: stdout + (stderr ? `\n[stderr]\n${stderr}` : ''),
                     cost: 0,
@@ -261,7 +373,10 @@ export class NodeRunner extends EventEmitter {
                 });
             });
             child.on('error', (err) => {
-                clearTimeout(timeoutTimer);
+                if (isResolved)
+                    return;
+                isResolved = true;
+                cleanup();
                 reject(new Error(`Shell node "${node.id}" failed: ${err.message}`));
             });
         });
@@ -292,6 +407,33 @@ export class NodeRunner extends EventEmitter {
         // Add target directory context
         parts.push(`\n\n## Working Directory\nThe project is located at: ${context.targetDir}\nAnalyze and modify files within this directory.`);
         return parts.join('\n');
+    }
+    sanitizeCommand(command) {
+        // Remove dangerous characters and patterns that could be used for injection
+        const dangerous = /[;&|`$(){}[\]<>]/g;
+        if (dangerous.test(command)) {
+            throw new Error('Command contains potentially dangerous characters: ' + command);
+        }
+        // Trim whitespace and validate non-empty
+        const trimmed = command.trim();
+        if (!trimmed) {
+            throw new Error('Empty command provided');
+        }
+        return trimmed;
+    }
+    parseCommand(command) {
+        // Split on whitespace while preserving quoted strings
+        const parts = command.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
+        if (parts.length === 0) {
+            throw new Error('Invalid command format');
+        }
+        const executable = parts[0].replace(/"/g, ''); // Remove quotes from executable
+        const args = parts.slice(1).map(arg => arg.replace(/"/g, '')); // Remove quotes from args
+        // Validate executable name (allow only alphanumeric, dash, underscore, dot)
+        if (!/^[\w.-]+$/.test(executable)) {
+            throw new Error(`Invalid executable name: ${executable}`);
+        }
+        return { executable, args };
     }
     handleStreamMessage(nodeId, msg, handlers) {
         switch (msg.type) {
