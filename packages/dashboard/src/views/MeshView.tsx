@@ -205,38 +205,132 @@ export function MeshView() {
   const [cluster, setCluster] = useState({ term: 0, leaderId: '' });
   const [panelOpen, setPanelOpen] = useState(true);
 
-  // Derive agents directly from mesh events (no ref gate — works with strict mode)
+  // Derive agents from mesh events — rebuild on EVERY storeMeshEvents change
+  // so that LEADER_ELECTED, VOTE_CAST, AGENT_DIED, AGENT_RESPAWNED all update roles dynamically.
   useEffect(() => {
     if (storeMeshEvents.length === 0) return;
 
-    // Extract unique agent names from all events
+    // Extract unique agent names from all events (skip system-level senders)
     const agentNames = new Set<string>();
     for (const e of storeMeshEvents) {
-      if (e.agentName && e.agentName !== 'System' && e.agentName !== 'Monitor' && e.agentName !== 'SwarmSimulator') {
+      if (
+        e.agentName &&
+        e.agentName !== 'System' &&
+        e.agentName !== 'Monitor' &&
+        e.agentName !== 'SwarmSimulator' &&
+        e.agentName !== 'SwarmCoordinator' &&
+        e.agentName !== 'ConsensusManager' &&
+        e.agentName !== 'TaskDecomposer' &&
+        e.agentName !== 'MeshResolver' &&
+        e.agentName !== 'AgentMonitor'
+      ) {
         agentNames.add(e.agentName);
+      }
+      // Also extract agent names mentioned inside LEADER_ELECTED / AGENT_DIED / AGENT_RESPAWNED details
+      if (e.type === 'LEADER_ELECTED') {
+        // details: "Alpha elected LEADER (term 3, 3/5 quorum)"
+        const m = e.details.match(/^(\S+)\s+elected\s+LEADER/i);
+        if (m) agentNames.add(m[1]);
+      }
+      if (e.type === 'AGENT_DIED') {
+        const m = e.details.match(/^(\S+)\s+DIED/i);
+        if (m) agentNames.add(m[1]);
+      }
+      if (e.type === 'AGENT_RESPAWNED') {
+        const m = e.details.match(/^(\S+)\s+respawned/i);
+        if (m) agentNames.add(m[1]);
       }
     }
 
     if (agentNames.size > 0) {
-      // Build agents from event data — re-derive on every change
-      const discovered: SimAgent[] = Array.from(agentNames).map((name) => {
-        // Find ALL events for this agent to build accurate state
-        const agentEvents = storeMeshEvents.filter((e) => e.agentName === name);
-        const latest = agentEvents[0]; // events are newest-first
-        const details = latest?.details ?? '';
-        const allDetails = agentEvents.map(e => e.details).join(' ').toLowerCase();
-        const isLeader = allDetails.includes('leader');
-        const isDead = allDetails.includes('died') || allDetails.includes('dead');
-        const tokenMatch = details.match(/([\d.]+)K?\s*tokens/i);
-        const tokens = tokenMatch ? parseFloat(tokenMatch[1]) * (details.includes('K') ? 1000 : 1) : 0;
+      // Process events in chronological order (storeMeshEvents is newest-first, so reverse)
+      const chronological = [...storeMeshEvents].reverse();
 
+      // Track per-agent state: role and tokens
+      const agentRoleMap = new Map<string, VisualRole>();
+      const agentTokenMap = new Map<string, number>();
+
+      // Initialize all discovered agents as followers
+      for (const name of agentNames) {
+        agentRoleMap.set(name, 'follower');
+        agentTokenMap.set(name, 0);
+      }
+
+      // Walk events oldest→newest so the last event wins
+      for (const evt of chronological) {
+        const type = evt.type;
+        const details = evt.details;
+
+        if (type === 'LEADER_ELECTED') {
+          // "Alpha elected LEADER ..." — that agent becomes leader, all others become follower
+          const m = details.match(/^(\S+)\s+elected\s+LEADER/i);
+          const leaderName = m ? m[1] : evt.agentName;
+          for (const name of agentNames) {
+            const current = agentRoleMap.get(name);
+            // Don't revive dead agents via a leader election
+            if (current === 'dead') continue;
+            agentRoleMap.set(name, name === leaderName ? 'leader' : 'follower');
+          }
+        } else if (type === 'VOTE_CAST') {
+          // Mark the voting agent as 'candidate' temporarily during election
+          // details: "X voted YES for candidateId ..."
+          // The agent that sent the event is the voter; mark them as candidate
+          if (agentNames.has(evt.agentName)) {
+            const current = agentRoleMap.get(evt.agentName);
+            if (current !== 'dead') {
+              agentRoleMap.set(evt.agentName, 'candidate');
+            }
+          }
+        } else if (type === 'ELECTION_STARTED') {
+          // details: "Election started (term N) -- CandidateName is candidate"
+          const cm = details.match(/--\s*(\S+)\s+is\s+candidate/i);
+          if (cm && agentNames.has(cm[1])) {
+            const current = agentRoleMap.get(cm[1]);
+            if (current !== 'dead') {
+              agentRoleMap.set(cm[1], 'candidate');
+            }
+          }
+        } else if (type === 'AGENT_DIED') {
+          // "AgentName DIED (reason)"
+          const m = details.match(/^(\S+)\s+DIED/i);
+          const deadName = m ? m[1] : evt.agentName;
+          if (agentNames.has(deadName)) {
+            agentRoleMap.set(deadName, 'dead');
+          }
+        } else if (type === 'AGENT_RESPAWNED') {
+          // "NewAgentName respawned (replacing oldId)"
+          const m = details.match(/^(\S+)\s+respawned/i);
+          const respawnedName = m ? m[1] : evt.agentName;
+          if (agentNames.has(respawnedName)) {
+            agentRoleMap.set(respawnedName, 'follower');
+          }
+        } else if (type === 'HEARTBEAT') {
+          // "Heartbeat from AgentName [role] -- 416803 tokens"
+          const tokenMatch = details.match(/(\d[\d,]*)\s*tokens/i);
+          if (tokenMatch) {
+            const raw = tokenMatch[1].replace(/,/g, '');
+            const tokens = parseInt(raw, 10);
+            // The agent name in the heartbeat detail
+            const hbNameMatch = details.match(/Heartbeat\s+from\s+(\S+)/i);
+            const hbName = hbNameMatch ? hbNameMatch[1] : evt.agentName;
+            if (agentNames.has(hbName) && !isNaN(tokens)) {
+              agentTokenMap.set(hbName, tokens);
+            }
+          }
+        }
+      }
+
+      // Build final SimAgent list
+      const discovered: SimAgent[] = Array.from(agentNames).map((name) => {
+        const role = agentRoleMap.get(name) ?? 'follower';
+        const tokens = agentTokenMap.get(name) ?? 0;
         return {
           id: name.toLowerCase().replace(/[^a-z0-9]/g, '-'),
           name,
-          role: isDead ? 'dead' as const : isLeader ? 'leader' as const : 'follower' as const,
-          status: 'idle' as const,
+          role,
+          status: role === 'dead' ? ('dead' as const) : ('idle' as const),
           tokensUsed: tokens,
-          health: isDead ? 0 : 1,
+          health: role === 'dead' ? 0 : 1,
         };
       });
 

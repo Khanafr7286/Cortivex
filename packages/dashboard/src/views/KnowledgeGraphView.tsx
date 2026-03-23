@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import * as d3 from 'd3';
-import { Search, X, ZoomIn, ZoomOut, Maximize2, Filter } from 'lucide-react';
+import { Search, X, ZoomIn, ZoomOut, Maximize2, Filter, GitBranch } from 'lucide-react';
 import { useCortivexStore } from '@/stores/cortivexStore';
+import type { Insight } from '@/lib/types';
 // History is loaded by the store's fetchInitialData
 
 // ============================================
@@ -57,7 +58,7 @@ function roundedRectPath(cx: number, cy: number, r: number): string {
   return `M${x + cr},${y} L${x + w - cr},${y} Q${x + w},${y} ${x + w},${y + cr} L${x + w},${y + h - cr} Q${x + w},${y + h} ${x + w - cr},${y + h} L${x + cr},${y + h} Q${x},${y + h} ${x},${y + h - cr} L${x},${y + cr} Q${x},${y} ${x + cr},${y} Z`;
 }
 
-/* --- demo data types --- */
+/* --- graph data types --- */
 interface KnowledgeNode {
   id: string;
   label: string;
@@ -74,128 +75,7 @@ interface KnowledgeEdge {
   weight: number;
 }
 
-/* --- demo data --- */
-function generateDemoGraph(): { nodes: KnowledgeNode[]; edges: KnowledgeEdge[] } {
-  const nodes: KnowledgeNode[] = [
-    // Source files (discovered by SWARM agents)
-    { id: 'kn-0', label: 'auth/login.ts', type: 'file', properties: { lines: '142', complexity: '8' }, discoveredBy: 'Agent-Alpha' },
-    { id: 'kn-1', label: 'api/routes.ts', type: 'file', properties: { lines: '256', complexity: '12' }, discoveredBy: 'Agent-Beta-2' },
-    { id: 'kn-2', label: 'utils/helpers.ts', type: 'file', properties: { lines: '89', complexity: '3' }, discoveredBy: 'Agent-Gamma' },
-    { id: 'kn-3', label: 'auth/session.ts', type: 'file', properties: { lines: '104', complexity: '6', conflict: 'resolved' }, discoveredBy: 'Agent-Alpha' },
-    { id: 'kn-17', label: 'config/database.ts', type: 'file', properties: { lines: '67', complexity: '2' }, discoveredBy: 'Agent-Delta' },
-    { id: 'kn-28', label: 'auth/middleware.ts', type: 'file', properties: { lines: '95', complexity: '5', conflict: 'resolved' }, discoveredBy: 'Agent-Epsilon' },
-
-    // Functions
-    { id: 'kn-4', label: 'loginHandler', type: 'function', properties: { params: '2', returnType: 'Promise<User>' }, discoveredBy: 'Agent-Alpha' },
-    { id: 'kn-5', label: 'validateToken', type: 'function', properties: { params: '1', returnType: 'boolean' }, discoveredBy: 'Agent-Beta-2' },
-    { id: 'kn-6', label: 'hashPassword', type: 'function', properties: { params: '2', returnType: 'string' }, discoveredBy: 'Agent-Beta-2' },
-    { id: 'kn-7', label: 'formatResponse', type: 'function', properties: { params: '3', returnType: 'APIResponse' }, discoveredBy: 'Agent-Alpha' },
-
-    // Patterns
-    { id: 'kn-8', label: 'Singleton Pattern', type: 'pattern', properties: { occurrences: '3', quality: 'good' }, discoveredBy: 'KnowledgeCurator' },
-    { id: 'kn-9', label: 'Error Boundary', type: 'pattern', properties: { occurrences: '5', quality: 'excellent' }, discoveredBy: 'KnowledgeCurator' },
-    { id: 'kn-10', label: 'Repository Pattern', type: 'pattern', properties: { occurrences: '2', quality: 'needs work' }, discoveredBy: 'KnowledgeCurator' },
-    { id: 'kn-29', label: 'Leader Election', type: 'pattern', properties: { algorithm: 'Raft', term: '3', quorum: '3/5' }, discoveredBy: 'ConsensusManager' },
-    { id: 'kn-30', label: 'Auto-Respawn', type: 'pattern', properties: { timeout: '90s', successRate: '95%' }, discoveredBy: 'AgentMonitor' },
-
-    // Dependencies
-    { id: 'kn-11', label: 'lodash@4.17.19', type: 'dependency', properties: { severity: 'high', cve: 'CVE-2021-23337' }, discoveredBy: 'Agent-Beta-2' },
-    { id: 'kn-12', label: 'express@4.18.2', type: 'dependency', properties: { severity: 'none', status: 'clean' }, discoveredBy: 'Agent-Beta-2' },
-    { id: 'kn-13', label: 'jsonwebtoken@9.0', type: 'dependency', properties: { severity: 'none', status: 'clean' }, discoveredBy: 'Agent-Beta-2' },
-
-    // SWARM Orchestration insights
-    { id: 'kn-14', label: 'SWARM -40% runtime', type: 'insight', properties: { confidence: '0.95', impact: '-40% pipeline time', agents: '5' }, discoveredBy: 'SwarmCoordinator' },
-    { id: 'kn-15', label: 'Auto-respawn -95% fail', type: 'insight', properties: { confidence: '0.97', impact: '-95% failure rate', respawnTime: '5s' }, discoveredBy: 'AgentMonitor' },
-    { id: 'kn-16', label: 'Dedup -60% waste', type: 'insight', properties: { confidence: '0.92', impact: '-60% duplicates', merged: '12 findings' }, discoveredBy: 'KnowledgeCurator' },
-    { id: 'kn-18', label: 'Leader reduces conflicts', type: 'insight', properties: { confidence: '0.90', impact: '-70% conflicts', strategy: 'priority-based' }, discoveredBy: 'ConsensusManager' },
-    { id: 'kn-31', label: 'MeshResolver 92% auto', type: 'insight', properties: { confidence: '0.93', impact: '92% auto-resolve', method: 'priority-based' }, discoveredBy: 'MeshResolver' },
-
-    // SWARM orchestration nodes (new type group)
-    { id: 'kn-19', label: 'SwarmCoordinator', type: 'pattern', properties: { role: 'orchestrator', agents: '5', status: 'active' }, discoveredBy: 'SwarmCoordinator' },
-    { id: 'kn-20', label: 'ConsensusManager', type: 'pattern', properties: { role: 'leader-election', algorithm: 'Raft', term: '3' }, discoveredBy: 'ConsensusManager' },
-    { id: 'kn-21', label: 'AgentMonitor', type: 'pattern', properties: { role: 'health-watchdog', timeout: '90s', respawns: '1' }, discoveredBy: 'AgentMonitor' },
-    { id: 'kn-22', label: 'TaskDecomposer', type: 'pattern', properties: { role: 'task-splitter', tasks: '12', rebalances: '1' }, discoveredBy: 'TaskDecomposer' },
-    { id: 'kn-23', label: 'KnowledgeCurator', type: 'pattern', properties: { role: 'deduplication', merged: '12', deduplicated: '4' }, discoveredBy: 'KnowledgeCurator' },
-    { id: 'kn-24', label: 'MeshResolver', type: 'pattern', properties: { role: 'conflict-resolution', resolved: '2', pending: '1' }, discoveredBy: 'MeshResolver' },
-
-    // Agent nodes
-    { id: 'kn-25', label: 'Agent-Alpha', type: 'function', properties: { role: 'leader', tasks: '3', status: 'active' }, discoveredBy: 'SwarmCoordinator' },
-    { id: 'kn-26', label: 'Agent-Beta-2', type: 'function', properties: { role: 'respawned', tasks: '2', original: 'Agent-Beta' }, discoveredBy: 'AgentMonitor' },
-    { id: 'kn-27', label: 'Agent-Gamma', type: 'function', properties: { role: 'worker', tasks: '4', rebalanced: '+3' }, discoveredBy: 'TaskDecomposer' },
-  ];
-
-  const edges: KnowledgeEdge[] = [
-    // File -> function containment
-    { id: 'ke-0', source: 'kn-0', target: 'kn-4', relation: 'contains', weight: 0.9 },
-    { id: 'ke-1', source: 'kn-0', target: 'kn-6', relation: 'contains', weight: 0.9 },
-    { id: 'ke-2', source: 'kn-3', target: 'kn-5', relation: 'contains', weight: 0.9 },
-    { id: 'ke-3', source: 'kn-1', target: 'kn-7', relation: 'contains', weight: 0.9 },
-
-    // Function calls
-    { id: 'ke-4', source: 'kn-4', target: 'kn-5', relation: 'calls', weight: 0.7 },
-    { id: 'ke-5', source: 'kn-4', target: 'kn-6', relation: 'calls', weight: 0.7 },
-
-    // File imports
-    { id: 'ke-6', source: 'kn-1', target: 'kn-0', relation: 'imports', weight: 0.6 },
-    { id: 'ke-7', source: 'kn-1', target: 'kn-3', relation: 'imports', weight: 0.6 },
-    { id: 'ke-8', source: 'kn-0', target: 'kn-2', relation: 'imports', weight: 0.5 },
-    { id: 'ke-19', source: 'kn-17', target: 'kn-12', relation: 'imports', weight: 0.4 },
-    { id: 'ke-21', source: 'kn-0', target: 'kn-13', relation: 'depends_on', weight: 0.7 },
-    { id: 'ke-35', source: 'kn-28', target: 'kn-3', relation: 'imports', weight: 0.6 },
-
-    // Pattern locations
-    { id: 'ke-9', source: 'kn-8', target: 'kn-3', relation: 'found_in', weight: 0.6 },
-    { id: 'ke-10', source: 'kn-9', target: 'kn-1', relation: 'found_in', weight: 0.6 },
-    { id: 'ke-11', source: 'kn-10', target: 'kn-17', relation: 'found_in', weight: 0.5 },
-    { id: 'ke-20', source: 'kn-7', target: 'kn-9', relation: 'uses_pattern', weight: 0.6 },
-
-    // Dependency usage
-    { id: 'ke-12', source: 'kn-11', target: 'kn-2', relation: 'used_by', weight: 0.8 },
-    { id: 'ke-13', source: 'kn-12', target: 'kn-1', relation: 'used_by', weight: 0.8 },
-    { id: 'ke-14', source: 'kn-13', target: 'kn-3', relation: 'used_by', weight: 0.8 },
-    { id: 'ke-22', source: 'kn-11', target: 'kn-1', relation: 'used_by', weight: 0.4 },
-
-    // SWARM orchestration edges — coordinator manages agents
-    { id: 'ke-23', source: 'kn-19', target: 'kn-25', relation: 'manages', weight: 0.9 },
-    { id: 'ke-24', source: 'kn-19', target: 'kn-26', relation: 'manages', weight: 0.9 },
-    { id: 'ke-25', source: 'kn-19', target: 'kn-27', relation: 'manages', weight: 0.9 },
-
-    // Consensus -> leader election
-    { id: 'ke-26', source: 'kn-20', target: 'kn-25', relation: 'elected', weight: 0.9 },
-    { id: 'ke-27', source: 'kn-20', target: 'kn-29', relation: 'uses_pattern', weight: 0.8 },
-
-    // AgentMonitor -> respawn
-    { id: 'ke-28', source: 'kn-21', target: 'kn-26', relation: 'respawned', weight: 0.9 },
-    { id: 'ke-29', source: 'kn-21', target: 'kn-30', relation: 'uses_pattern', weight: 0.8 },
-
-    // TaskDecomposer -> rebalancing
-    { id: 'ke-30', source: 'kn-22', target: 'kn-27', relation: 'rebalanced', weight: 0.8 },
-
-    // KnowledgeCurator -> insights
-    { id: 'ke-31', source: 'kn-23', target: 'kn-16', relation: 'discovered', weight: 0.7 },
-    { id: 'ke-32', source: 'kn-23', target: 'kn-8', relation: 'curated', weight: 0.6 },
-    { id: 'ke-33', source: 'kn-23', target: 'kn-9', relation: 'curated', weight: 0.6 },
-
-    // MeshResolver -> conflict files
-    { id: 'ke-34', source: 'kn-24', target: 'kn-3', relation: 'resolved', weight: 0.8 },
-    { id: 'ke-36', source: 'kn-24', target: 'kn-28', relation: 'resolved', weight: 0.8 },
-
-    // Insights apply to orchestration
-    { id: 'ke-15', source: 'kn-14', target: 'kn-19', relation: 'applies_to', weight: 0.5 },
-    { id: 'ke-16', source: 'kn-15', target: 'kn-21', relation: 'applies_to', weight: 0.5 },
-    { id: 'ke-17', source: 'kn-16', target: 'kn-23', relation: 'applies_to', weight: 0.5 },
-    { id: 'ke-18', source: 'kn-18', target: 'kn-20', relation: 'applies_to', weight: 0.5 },
-    { id: 'ke-37', source: 'kn-31', target: 'kn-24', relation: 'applies_to', weight: 0.5 },
-
-    // Agents -> files they work on
-    { id: 'ke-38', source: 'kn-25', target: 'kn-0', relation: 'analyzes', weight: 0.7 },
-    { id: 'ke-39', source: 'kn-25', target: 'kn-3', relation: 'analyzes', weight: 0.7 },
-    { id: 'ke-40', source: 'kn-26', target: 'kn-1', relation: 'analyzes', weight: 0.7 },
-    { id: 'ke-41', source: 'kn-27', target: 'kn-2', relation: 'analyzes', weight: 0.7 },
-  ];
-
-  return { nodes, edges };
-}
+/* (demo graph removed — only real API data is used) */
 
 /* --- simulation types --- */
 interface SimNode extends d3.SimulationNodeDatum {
@@ -214,11 +94,12 @@ interface SimLink extends d3.SimulationLinkDatum<SimNode> {
   weight: number;
 }
 
-/* --- build graph from real execution history --- */
-function buildGraphFromHistory(
+/* --- build graph from real execution history + insights --- */
+function buildGraphFromData(
   history: { pipelineName: string; nodesRun: number; success: boolean; cost: number; tokensUsed: number; duration: number; runNumber: number }[],
+  insights: Insight[],
 ): { nodes: KnowledgeNode[]; edges: KnowledgeEdge[] } | null {
-  if (history.length === 0) return null;
+  if (history.length === 0 && insights.length === 0) return null;
 
   const nodes: KnowledgeNode[] = [];
   const edges: KnowledgeEdge[] = [];
@@ -247,33 +128,35 @@ function buildGraphFromHistory(
     }
   }
 
-  // Create insight nodes from aggregated stats
-  const totalRuns = history.length;
-  const successCount = history.filter((r) => r.success).length;
-  const avgCost = history.reduce((s, r) => s + r.cost, 0) / totalRuns;
+  // Create aggregated stats node when we have history
+  if (history.length > 0) {
+    const totalRuns = history.length;
+    const successCount = history.filter((r) => r.success).length;
+    const avgCost = history.reduce((s, r) => s + r.cost, 0) / totalRuns;
 
-  const insightId = 'insight-overall';
-  nodeIds.add(insightId);
-  nodes.push({
-    id: insightId,
-    label: `${successCount}/${totalRuns} success`,
-    type: 'insight',
-    properties: {
-      avgCost: `$${avgCost.toFixed(2)}`,
-      totalRuns: String(totalRuns),
-    },
-    discoveredBy: 'LearningEngine',
-  });
-
-  // Connect pipelines to the insight node
-  for (const name of pipelineNames) {
-    edges.push({
-      id: `edge-${name}-insight`,
-      source: `pipeline-${name}`,
-      target: insightId,
-      relation: 'contributes_to',
-      weight: 0.5,
+    const insightId = 'insight-overall';
+    nodeIds.add(insightId);
+    nodes.push({
+      id: insightId,
+      label: `${successCount}/${totalRuns} success`,
+      type: 'insight',
+      properties: {
+        avgCost: `$${avgCost.toFixed(2)}`,
+        totalRuns: String(totalRuns),
+      },
+      discoveredBy: 'LearningEngine',
     });
+
+    // Connect pipelines to the insight node
+    for (const name of pipelineNames) {
+      edges.push({
+        id: `edge-${name}-insight`,
+        source: `pipeline-${name}`,
+        target: insightId,
+        relation: 'contributes_to',
+        weight: 0.5,
+      });
+    }
   }
 
   // Create dependency edges between pipelines that ran in sequence (by runNumber proximity)
@@ -299,6 +182,38 @@ function buildGraphFromHistory(
     }
   }
 
+  // Add insight nodes from the learning API
+  for (const insight of insights) {
+    const id = `insight-${insight.id}`;
+    if (!nodeIds.has(id)) {
+      nodeIds.add(id);
+      nodes.push({
+        id,
+        label: insight.pattern.length > 40 ? insight.pattern.slice(0, 38) + '...' : insight.pattern,
+        type: 'insight',
+        properties: {
+          action: insight.action,
+          confidence: `${(insight.confidence * 100).toFixed(0)}%`,
+          basedOnRuns: String(insight.basedOnRuns),
+          impact: insight.impact || 'N/A',
+          category: insight.category || 'general',
+        },
+        discoveredBy: 'LearningEngine',
+      });
+
+      // Connect insights to relevant pipelines by category match
+      for (const name of pipelineNames) {
+        edges.push({
+          id: `edge-insight-${insight.id}-${name}`,
+          source: id,
+          target: `pipeline-${name}`,
+          relation: 'applies_to',
+          weight: insight.confidence * 0.6,
+        });
+      }
+    }
+  }
+
   return { nodes, edges };
 }
 
@@ -316,13 +231,13 @@ export function KnowledgeGraphView() {
   const [showEdgeLabels, setShowEdgeLabels] = useState(false);
 
 
-  const { history: storeHistory } = useCortivexStore();
+  const { history: storeHistory, insights: storeInsights } = useCortivexStore();
 
-  // Use store history directly — fetchInitialData already loaded it
-  const sourceHistory = storeHistory;
-  const realGraph = useMemo(() => buildGraphFromHistory(sourceHistory), [sourceHistory]);
-  const demoGraph = useMemo(() => generateDemoGraph(), []);
-  const baseGraph = realGraph ?? demoGraph;
+  // Build graph from real API data only — no demo fallback
+  const realGraph = useMemo(() => buildGraphFromData(storeHistory, storeInsights), [storeHistory, storeInsights]);
+
+  const emptyGraph: { nodes: KnowledgeNode[]; edges: KnowledgeEdge[] } = { nodes: [], edges: [] };
+  const baseGraph = realGraph ?? emptyGraph;
 
   const displayGraph = useMemo(() => {
     if (!activeFilter) return baseGraph;
@@ -746,6 +661,25 @@ export function KnowledgeGraphView() {
     }
     return counts;
   }, [displayGraph.nodes]);
+
+  // Empty state when no data is available
+  if (!realGraph) {
+    return (
+      <div className="w-full h-full flex flex-col items-center justify-center bg-canvas-dark" style={{ minHeight: 500 }}>
+        <div className="bg-canvas-card border border-canvas-border rounded-2xl p-8 text-center max-w-md shadow-xl">
+          <div className="w-16 h-16 rounded-2xl bg-cortivex-cyan/10 flex items-center justify-center mx-auto mb-4">
+            <GitBranch size={28} className="text-cortivex-cyan" />
+          </div>
+          <h3 className="text-lg font-semibold text-text-primary mb-2">
+            No Knowledge Graph Data
+          </h3>
+          <p className="text-sm text-text-muted">
+            Run pipelines and collect insights to build the knowledge graph. Data is loaded from the execution history and learning insights APIs.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
