@@ -146,7 +146,7 @@ export class CortivexInsights implements INodeType {
 							json: {
 								pattern: insight.pattern ?? null,
 								confidence: insight.confidence ?? null,
-								pipeline: insight.pipeline ?? pipeline || null,
+								pipeline: insight.pipeline ?? (pipeline || null),
 								usageCount: insight.usageCount ?? 0,
 								lastUsed: insight.lastUsed ?? null,
 								category: insight.category ?? null,

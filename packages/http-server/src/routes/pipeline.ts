@@ -12,7 +12,7 @@ import {
 } from '@cortivex/core';
 import { attachExecutorEvents } from '../ws/handler.js';
 import { swarmSimulator } from '../swarm/simulator.js';
-import { validatePipelineName } from '../index.js';
+import { validatePipelineName } from '../validation.js';
 
 const router = Router();
 

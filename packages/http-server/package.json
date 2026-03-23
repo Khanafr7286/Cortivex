@@ -1,6 +1,8 @@
 {
   "name": "@cortivex/http-server",
   "version": "1.0.0",
+  "description": "REST API and WebSocket server for Cortivex pipeline orchestration",
+  "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

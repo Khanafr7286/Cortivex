@@ -1,6 +1,8 @@
 {
   "name": "@cortivex/mcp-server",
   "version": "1.0.0",
+  "description": "MCP server exposing Cortivex pipeline tools to Claude Code",
+  "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

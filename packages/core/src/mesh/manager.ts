@@ -1,5 +1,5 @@
 import { readFile, writeFile, readdir, unlink, mkdir, rename } from 'node:fs/promises';
-import { join, basename, resolve } from 'node:path';
+import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { MeshClaim, MeshConflict, MeshState } from '../types.js';
 
