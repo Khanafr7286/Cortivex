@@ -1,10 +1,14 @@
 /**
- * SwarmSimulator — Broadcasts simulated swarm consensus events
- * over WebSocket for dashboard visualization and testing.
+ * SwarmSimulator — Broadcasts real pipeline node events as swarm consensus
+ * events over WebSocket for dashboard visualization.
  *
- * This is a visualization aid, not a production consensus implementation.
- * Events: leader_elected, vote_cast, heartbeat, agent_died,
- * agent_respawned, task_rebalanced, knowledge_synced, quorum_check
+ * When a pipeline runs, actual nodes (Code Reviewer, Security Scanner, etc.)
+ * are treated as swarm agents. Leader election picks the first active node
+ * as coordinator. Heartbeats reflect real token accumulation from Claude CLI.
+ *
+ * Events: bootstrap, election_started, vote_cast, leader_elected,
+ * heartbeat, agent_died, agent_respawned, task_rebalanced,
+ * knowledge_synced, quorum_check, conflict_resolved, shutdown
  */
 
 import { broadcast } from '../ws/handler.js';
@@ -14,8 +18,10 @@ interface SwarmAgent {
   name: string;
   role: 'leader' | 'follower' | 'candidate' | 'dead';
   tokensUsed: number;
+  cost: number;
   lastHeartbeat: number;
-  taskCount: number;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  progress: number;
 }
 
 export class SwarmSimulator {
@@ -23,73 +29,216 @@ export class SwarmSimulator {
   private term = 0;
   private leaderId: string | null = null;
   private running = false;
-  private intervals: ReturnType<typeof setInterval>[] = [];
+  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  private quorumInterval: ReturnType<typeof setInterval> | null = null;
+  private electionInProgress = false;
 
-  start(agentCount = 5): void {
+  /**
+   * Start the swarm with real pipeline node names.
+   * @param nodeNames Array of actual pipeline node IDs/names
+   */
+  start(nodeNames: string[]): void {
     if (this.running) return;
     this.running = true;
-    this.term = 1;
+    this.term = 0;
+    this.agents.clear();
+    this.leaderId = null;
 
-    // Bootstrap agents
-    const names = ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon'];
-    for (let i = 0; i < agentCount; i++) {
-      const id = `agent-${names[i]?.toLowerCase() || i}`;
+    // Create agents from real pipeline nodes
+    for (const name of nodeNames) {
+      const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
       this.agents.set(id, {
         id,
-        name: names[i] || `Agent-${i}`,
+        name,
         role: 'follower',
         tokensUsed: 0,
+        cost: 0,
         lastHeartbeat: Date.now(),
-        taskCount: 0,
+        status: 'pending',
+        progress: 0,
       });
     }
 
-    // Broadcast cluster bootstrap
+    // Broadcast cluster bootstrap with real node names
     broadcast('swarm:bootstrap', {
-      agentCount,
-      agents: Array.from(this.agents.values()).map(a => ({ id: a.id, name: a.name, role: a.role })),
+      agentCount: nodeNames.length,
+      agents: Array.from(this.agents.values()).map(a => ({
+        id: a.id,
+        name: a.name,
+        role: a.role,
+        status: a.status,
+      })),
     });
 
-    // Run initial election after 2 seconds
-    setTimeout(() => this.runElection(), 2000);
+    // Start heartbeat broadcasting every 4 seconds
+    this.heartbeatInterval = setInterval(() => this.sendHeartbeats(), 4000);
 
-    // Heartbeat every 5 seconds
-    this.intervals.push(setInterval(() => this.sendHeartbeats(), 5000));
-
-    // Random events every 8-15 seconds
-    this.intervals.push(setInterval(() => this.randomEvent(), 8000 + Math.random() * 7000));
-
-    // Token accumulation every 3 seconds
-    this.intervals.push(setInterval(() => this.accumulateTokens(), 3000));
-
-    // Occasional agent death (every 30-60 seconds)
-    this.intervals.push(setInterval(() => {
-      if (Math.random() < 0.3) this.killRandomAgent();
-    }, 30000 + Math.random() * 30000));
+    // Quorum checks every 10 seconds
+    this.quorumInterval = setInterval(() => this.checkQuorum(), 10000);
   }
 
   stop(): void {
     this.running = false;
-    for (const interval of this.intervals) {
-      clearInterval(interval);
-    }
-    this.intervals = [];
+    if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+    if (this.quorumInterval) clearInterval(this.quorumInterval);
+    this.heartbeatInterval = null;
+    this.quorumInterval = null;
+
+    broadcast('swarm:shutdown', {
+      term: this.term,
+      totalAgents: this.agents.size,
+      completedAgents: Array.from(this.agents.values()).filter(a => a.status === 'completed').length,
+    });
+
     this.agents.clear();
     this.leaderId = null;
-
-    broadcast('swarm:shutdown', { term: this.term });
+    this.electionInProgress = false;
   }
 
-  private runElection(): void {
+  /**
+   * Called when a real pipeline node starts executing.
+   * Triggers leader election if no leader exists.
+   */
+  onNodeStart(nodeId: string, nodeType: string): void {
     if (!this.running) return;
 
+    // Find agent by matching nodeId or nodeType
+    const agent = this.findAgent(nodeId, nodeType);
+    if (!agent) return;
+
+    agent.status = 'running';
+    agent.lastHeartbeat = Date.now();
+
+    // If no leader and no election in progress, run election with this node as candidate
+    if (!this.leaderId && !this.electionInProgress) {
+      this.runElection(agent.id);
+    }
+
+    broadcast('swarm:task_rebalanced', {
+      agentId: agent.id,
+      agentName: agent.name,
+      action: 'started',
+      nodeType,
+      term: this.term,
+    });
+  }
+
+  /**
+   * Called when a real pipeline node reports progress.
+   */
+  onNodeProgress(nodeId: string, progress: number, message: string): void {
+    if (!this.running) return;
+
+    const agent = this.findAgent(nodeId);
+    if (!agent) return;
+
+    agent.progress = progress;
+    agent.lastHeartbeat = Date.now();
+  }
+
+  /**
+   * Called when a real pipeline node completes successfully.
+   */
+  onNodeComplete(nodeId: string, cost: number, tokens: number): void {
+    if (!this.running) return;
+
+    const agent = this.findAgent(nodeId);
+    if (!agent) return;
+
+    agent.status = 'completed';
+    agent.tokensUsed = tokens;
+    agent.cost = cost;
+    agent.progress = 100;
+
+    // Sync knowledge from this node's findings
+    broadcast('swarm:knowledge_synced', {
+      agentId: agent.id,
+      agentName: agent.name,
+      tokensUsed: tokens,
+      cost,
+      term: this.term,
+    });
+
+    // If the leader completed, elect a new leader from running nodes
+    if (agent.id === this.leaderId) {
+      const runningAgents = Array.from(this.agents.values()).filter(
+        a => a.status === 'running' && a.id !== agent.id
+      );
+      if (runningAgents.length > 0) {
+        this.leaderId = null;
+        agent.role = 'follower';
+        this.runElection(runningAgents[0].id);
+      }
+    }
+  }
+
+  /**
+   * Called when a real pipeline node fails.
+   */
+  onNodeFailed(nodeId: string, error: string): void {
+    if (!this.running) return;
+
+    const agent = this.findAgent(nodeId);
+    if (!agent) return;
+
+    const wasLeader = agent.id === this.leaderId;
+    agent.status = 'failed';
+    agent.role = 'dead';
+
+    broadcast('swarm:agent_died', {
+      agentId: agent.id,
+      agentName: agent.name,
+      wasLeader,
+      reason: error.slice(0, 100),
+      term: this.term,
+    });
+
+    // If leader died, elect new one
+    if (wasLeader) {
+      this.leaderId = null;
+      const runningAgents = Array.from(this.agents.values()).filter(
+        a => a.status === 'running'
+      );
+      if (runningAgents.length > 0) {
+        setTimeout(() => this.runElection(runningAgents[0].id), 1000);
+      }
+    }
+  }
+
+  /**
+   * Called when mesh conflict is detected.
+   */
+  onMeshConflict(file: string, claimedBy: string): void {
+    if (!this.running) return;
+
+    broadcast('swarm:conflict_resolved', {
+      file,
+      claimedBy,
+      strategy: 'first_claim',
+      term: this.term,
+    });
+  }
+
+  /**
+   * Leader election using actual pipeline nodes.
+   * The candidate is a real running node, votes are based on node readiness.
+   */
+  private runElection(candidateId?: string): void {
+    if (!this.running || this.electionInProgress) return;
+    this.electionInProgress = true;
+
     this.term++;
-    const aliveAgents = Array.from(this.agents.values()).filter(a => a.role !== 'dead');
+    const aliveAgents = Array.from(this.agents.values()).filter(
+      a => a.role !== 'dead' && a.status !== 'failed'
+    );
     if (aliveAgents.length === 0) return;
 
-    // Pick a candidate (random alive agent)
-    const candidateIdx = Math.floor(Math.random() * aliveAgents.length);
-    const candidate = aliveAgents[candidateIdx];
+    // Pick candidate: specified or first running agent
+    const candidate = candidateId
+      ? this.agents.get(candidateId) ?? aliveAgents[0]
+      : aliveAgents[0];
+
+    if (!candidate) return;
     candidate.role = 'candidate';
 
     broadcast('swarm:election_started', {
@@ -98,43 +247,45 @@ export class SwarmSimulator {
       candidateName: candidate.name,
     });
 
-    // Simulate votes (all alive agents vote)
+    // Voting: running nodes vote yes, pending nodes abstain
     let votesFor = 0;
-    const totalVoters = aliveAgents.length;
+    const quorumNeeded = Math.floor(aliveAgents.length / 2) + 1;
 
     setTimeout(() => {
+      if (!this.running) return;
+
       for (const agent of aliveAgents) {
-        const voteGranted = agent.id === candidate.id || Math.random() > 0.2;
-        if (voteGranted) votesFor++;
+        // Running/completed agents always vote yes for the candidate
+        const granted = agent.status === 'running' || agent.status === 'completed' || agent.id === candidate.id;
+        if (granted) votesFor++;
 
         broadcast('swarm:vote_cast', {
           term: this.term,
           voterId: agent.id,
           voterName: agent.name,
           candidateId: candidate.id,
-          granted: voteGranted,
+          granted,
           votesFor,
-          votesNeeded: Math.floor(totalVoters / 2) + 1,
+          votesNeeded: quorumNeeded,
         });
       }
 
-      // Check quorum
-      const quorumNeeded = Math.floor(totalVoters / 2) + 1;
       const elected = votesFor >= quorumNeeded;
 
       setTimeout(() => {
+        if (!this.running) return;
+
         if (elected) {
           // Demote old leader
           if (this.leaderId && this.agents.has(this.leaderId)) {
-            const oldLeader = this.agents.get(this.leaderId)!;
-            if (oldLeader.role !== 'dead') oldLeader.role = 'follower';
+            const old = this.agents.get(this.leaderId)!;
+            if (old.role !== 'dead') old.role = 'follower';
           }
 
-          // Promote new leader
           candidate.role = 'leader';
           this.leaderId = candidate.id;
+          this.electionInProgress = false;
 
-          // All others become followers
           for (const agent of aliveAgents) {
             if (agent.id !== candidate.id && agent.role !== 'dead') {
               agent.role = 'follower';
@@ -147,167 +298,88 @@ export class SwarmSimulator {
             leaderName: candidate.name,
             votes: votesFor,
             quorum: quorumNeeded,
-            totalAgents: totalVoters,
+            totalAgents: aliveAgents.length,
           });
         } else {
           candidate.role = 'follower';
+          this.electionInProgress = false;
           broadcast('swarm:election_failed', {
             term: this.term,
             candidateId: candidate.id,
             votes: votesFor,
             quorum: quorumNeeded,
           });
-
-          // Retry election after delay
-          setTimeout(() => this.runElection(), 3000);
         }
-      }, 1000);
-    }, 1500);
+      }, 800);
+    }, 1200);
   }
 
   private sendHeartbeats(): void {
     if (!this.running) return;
 
     for (const agent of this.agents.values()) {
-      if (agent.role === 'dead') continue;
-      agent.lastHeartbeat = Date.now();
+      if (agent.role === 'dead' || agent.status === 'failed') continue;
 
       broadcast('swarm:heartbeat', {
         agentId: agent.id,
         agentName: agent.name,
         role: agent.role,
+        status: agent.status,
         tokensUsed: agent.tokensUsed,
-        taskCount: agent.taskCount,
+        cost: agent.cost,
+        progress: agent.progress,
         term: this.term,
       });
     }
   }
 
-  private accumulateTokens(): void {
+  private checkQuorum(): void {
     if (!this.running) return;
 
-    for (const agent of this.agents.values()) {
-      if (agent.role === 'dead') continue;
-      agent.tokensUsed += Math.floor(Math.random() * 2000) + 500;
-      agent.taskCount = Math.floor(agent.tokensUsed / 10000);
-    }
-  }
+    const alive = Array.from(this.agents.values()).filter(
+      a => a.role !== 'dead' && a.status !== 'failed'
+    ).length;
+    const total = this.agents.size;
 
-  private killRandomAgent(): void {
-    if (!this.running) return;
-
-    const aliveAgents = Array.from(this.agents.values()).filter(a => a.role !== 'dead');
-    if (aliveAgents.length <= 2) return; // Keep at least 2 alive
-
-    const victim = aliveAgents[Math.floor(Math.random() * aliveAgents.length)];
-    const wasLeader = victim.role === 'leader';
-    victim.role = 'dead';
-
-    broadcast('swarm:agent_died', {
-      agentId: victim.id,
-      agentName: victim.name,
-      wasLeader,
-      reason: Math.random() > 0.5 ? 'heartbeat_timeout_90s' : 'token_limit_exceeded_80K',
+    broadcast('swarm:quorum_check', {
+      alive,
+      total,
+      quorumMet: alive > total / 2,
       term: this.term,
     });
-
-    // Auto-respawn after 3 seconds
-    setTimeout(() => {
-      if (!this.running) return;
-
-      const newId = `${victim.id}-respawn`;
-      const newAgent: SwarmAgent = {
-        id: newId,
-        name: `${victim.name}-2`,
-        role: 'follower',
-        tokensUsed: 0,
-        lastHeartbeat: Date.now(),
-        taskCount: 0,
-      };
-
-      this.agents.delete(victim.id);
-      this.agents.set(newId, newAgent);
-
-      broadcast('swarm:agent_respawned', {
-        oldAgentId: victim.id,
-        newAgentId: newId,
-        newAgentName: newAgent.name,
-        term: this.term,
-      });
-
-      // Rebalance tasks
-      broadcast('swarm:task_rebalanced', {
-        fromAgent: victim.id,
-        toAgent: newId,
-        taskCount: victim.taskCount,
-        term: this.term,
-      });
-
-      // If leader died, trigger new election
-      if (wasLeader) {
-        this.leaderId = null;
-        setTimeout(() => this.runElection(), 2000);
-      }
-    }, 3000);
   }
 
-  private randomEvent(): void {
-    if (!this.running) return;
+  private findAgent(nodeId: string, nodeType?: string): SwarmAgent | undefined {
+    // Try exact match on id
+    const normalized = nodeId.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    let agent = this.agents.get(normalized);
+    if (agent) return agent;
 
-    const events = ['knowledge_sync', 'quorum_check', 'mesh_claim', 'conflict_resolved'];
-    const event = events[Math.floor(Math.random() * events.length)];
-
-    const aliveAgents = Array.from(this.agents.values()).filter(a => a.role !== 'dead');
-    if (aliveAgents.length === 0) return;
-
-    const agent = aliveAgents[Math.floor(Math.random() * aliveAgents.length)];
-
-    switch (event) {
-      case 'knowledge_sync':
-        broadcast('swarm:knowledge_synced', {
-          agentId: agent.id,
-          agentName: agent.name,
-          findingsCount: Math.floor(Math.random() * 5) + 1,
-          deduplicatedCount: Math.floor(Math.random() * 3),
-          term: this.term,
-        });
-        break;
-
-      case 'quorum_check': {
-        const alive = aliveAgents.length;
-        const total = this.agents.size;
-        broadcast('swarm:quorum_check', {
-          alive,
-          total,
-          quorumMet: alive > total / 2,
-          term: this.term,
-        });
-        break;
-      }
-
-      case 'mesh_claim': {
-        const files = ['src/auth/session.ts', 'src/api/routes.ts', 'src/utils/helpers.ts', 'src/config/database.ts'];
-        broadcast('swarm:mesh_claim', {
-          agentId: agent.id,
-          agentName: agent.name,
-          file: files[Math.floor(Math.random() * files.length)],
-          term: this.term,
-        });
-        break;
-      }
-
-      case 'conflict_resolved': {
-        const strategies = ['priority_based', 'first_claim', 'leader_arbitration'];
-        broadcast('swarm:conflict_resolved', {
-          file: 'src/auth/session.ts',
-          strategy: strategies[Math.floor(Math.random() * strategies.length)],
-          winnerId: agent.id,
-          winnerName: agent.name,
-          term: this.term,
-        });
-        break;
+    // Try matching by name containing nodeId or nodeType
+    for (const a of this.agents.values()) {
+      const aName = a.name.toLowerCase();
+      const aId = a.id.toLowerCase();
+      if (
+        aName === nodeId.toLowerCase() ||
+        aId === nodeId.toLowerCase() ||
+        (nodeType && aName === nodeType.toLowerCase()) ||
+        (nodeType && aId === nodeType.toLowerCase().replace(/[^a-z0-9]+/g, '-'))
+      ) {
+        return a;
       }
     }
+
+    // Partial match
+    for (const a of this.agents.values()) {
+      if (
+        a.name.toLowerCase().includes(nodeId.toLowerCase()) ||
+        a.id.includes(normalized)
+      ) {
+        return a;
+      }
+    }
+
+    return undefined;
   }
 }
 

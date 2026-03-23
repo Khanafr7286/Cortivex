@@ -77,9 +77,27 @@ router.post('/run', async (req, res) => {
       timeout: (config?.timeout as number) ?? 300000,
     };
 
-    // Start SWARM simulator for live consensus visualization
-    if (!options.dryRun) {
-      swarmSimulator.start(pipelineDef.nodes?.length ?? 5);
+    // Start SWARM simulator with REAL pipeline node names
+    if (!options.dryRun && pipelineDef.nodes) {
+      const nodeNames = pipelineDef.nodes.map((n: any) => n.id || n.type || 'unknown');
+      swarmSimulator.start(nodeNames);
+
+      // Wire real executor events to the simulator
+      executor.on('node:start', (nodeId, nodeType) => {
+        swarmSimulator.onNodeStart(nodeId, nodeType);
+      });
+      executor.on('node:progress', (nodeId, progress, message) => {
+        swarmSimulator.onNodeProgress(nodeId, progress, message);
+      });
+      executor.on('node:complete', (nodeId, state) => {
+        swarmSimulator.onNodeComplete(nodeId, state.cost, state.tokens);
+      });
+      executor.on('node:failed', (nodeId, error) => {
+        swarmSimulator.onNodeFailed(nodeId, error);
+      });
+      executor.on('mesh:conflict', (file, claimedBy) => {
+        swarmSimulator.onMeshConflict(file, claimedBy);
+      });
     }
 
     // Start execution (don't await — return runId immediately)

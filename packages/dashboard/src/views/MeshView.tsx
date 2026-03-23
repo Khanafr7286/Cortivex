@@ -306,13 +306,24 @@ export function MeshView() {
           }
         } else if (type === 'HEARTBEAT') {
           // "Heartbeat from AgentName [role] -- 416803 tokens"
+          const hbNameMatch = details.match(/Heartbeat\s+from\s+(\S+)/i);
+          const hbName = hbNameMatch ? hbNameMatch[1] : evt.agentName;
+
+          // Parse role from [leader] / [follower] / [candidate] / [dead] tag
+          const roleMatch = details.match(/\[(leader|follower|candidate|dead)\]/i);
+          if (roleMatch && agentNames.has(hbName)) {
+            const hbRole = roleMatch[1].toLowerCase() as VisualRole;
+            const current = agentRoleMap.get(hbName);
+            if (current !== 'dead' || hbRole === 'dead') {
+              agentRoleMap.set(hbName, hbRole);
+            }
+          }
+
+          // Parse token count
           const tokenMatch = details.match(/(\d[\d,]*)\s*tokens/i);
           if (tokenMatch) {
             const raw = tokenMatch[1].replace(/,/g, '');
             const tokens = parseInt(raw, 10);
-            // The agent name in the heartbeat detail
-            const hbNameMatch = details.match(/Heartbeat\s+from\s+(\S+)/i);
-            const hbName = hbNameMatch ? hbNameMatch[1] : evt.agentName;
             if (agentNames.has(hbName) && !isNaN(tokens)) {
               agentTokenMap.set(hbName, tokens);
             }
