@@ -1,6 +1,6 @@
 # Skill Reference
 
-Cortivex ships 15 Claude Code skills organized into three tiers: Core, Coordination, and Advanced. Each skill is a self-contained operational manual averaging 300-600 lines of structured guidance. Unlike typical skills that provide simple instruction lists, every Cortivex skill includes reasoning protocols, anti-pattern tables, and grounding rules.
+Cortivex ships 15 Claude Code skills organized into three tiers: Core, Coordination, and Advanced. Each skill is a self-contained operational manual averaging 600+ lines of structured guidance. Unlike typical skills that provide simple instruction lists, every Cortivex skill includes reasoning protocols, anti-pattern tables, grounding rules, and Advanced Capabilities sections with MCP tool examples, YAML configurations, and JSON schemas.
 
 All skill files live in `.agents/skills/<skill-name>/SKILL.md` within the Cortivex repository.
 

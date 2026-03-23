@@ -65,8 +65,8 @@ cortivex init
 # Run a built-in pipeline
 cortivex run pr-review
 
-# Create a custom pipeline from natural language
-cortivex create "find security issues and fix them" --save-as security-fix
+# Create a custom pipeline
+cortivex create security-fix --description "find security issues and fix them"
 
 # Preview cost before executing
 cortivex run security-fix --dry-run
@@ -442,11 +442,10 @@ The Cortivex MCP server exposes tools for programmatic access from Claude Code o
 
 | Category | Tools |
 |----------|-------|
-| Pipeline | `cortivex_run`, `cortivex_create`, `cortivex_list`, `cortivex_status`, `cortivex_stop` |
-| Mesh | `cortivex_mesh`, `cortivex_mesh_resolver` |
-| Knowledge | `cortivex_knowledge`, `cortivex_insights`, `cortivex_decompose` |
-| Cluster | `cortivex_cluster`, `cortivex_scale`, `cortivex_agent` |
-| Utilities | `cortivex_tasks`, `cortivex_templates`, `cortivex_config`, `cortivex_nodes` |
+| Pipeline | `cortivex_run`, `cortivex_create`, `cortivex_list`, `cortivex_status` |
+| Mesh | `cortivex_mesh` |
+| Learning | `cortivex_insights`, `cortivex_history` |
+| Export | `cortivex_export` |
 
 </details>
 
@@ -475,13 +474,13 @@ The visual dashboard is available at `localhost:4200` after running `cortivex ui
 |---------|-------------|
 | `cortivex init` | Create `.cortivex/` directory with config and learning database |
 | `cortivex run <template>` | Execute a pipeline with cost estimation and progress reporting |
-| `cortivex create "<desc>"` | Generate a pipeline from natural language |
+| `cortivex create <name>` | Create a new pipeline definition |
 | `cortivex list` | List all templates with cost and duration estimates |
-| `cortivex status` | Show the most recent run with per-node results |
-| `cortivex stop <id>` | Stop a running pipeline gracefully |
 | `cortivex serve` | Start the HTTP API server |
-| `cortivex install-skills` | Install Claude Code skill definitions |
-| `cortivex ui` | Start the visual dashboard |
+| `cortivex serve --mcp` | Start the MCP server for Claude Code |
+| `cortivex export <pipeline>` | Export pipeline to n8n, JSON, or YAML format |
+| `cortivex insights` | Show learned patterns and execution statistics |
+| `cortivex mesh` | Show mesh coordination state |
 
 ### Integrations
 
@@ -489,7 +488,7 @@ The visual dashboard is available at `localhost:4200` after running `cortivex ui
 
 **n8n**: Install `n8n-nodes-cortivex` to embed pipelines in n8n workflows. Connect to GitHub webhooks, Slack notifications, scheduled triggers, or any of n8n's 400+ integrations.
 
-**HTTP API**: Run `cortivex serve --port 3100` and use REST endpoints to trigger pipelines, check status, and query insights from any HTTP client.
+**HTTP API**: Run `cortivex serve` (default port 3939) and use REST endpoints to trigger pipelines, check status, and query insights from any HTTP client.
 
 **Webhooks**: Point Zapier, Make, or any webhook source at the HTTP server to trigger pipelines from external events.
 
