@@ -1,0 +1,107 @@
+# =============================================================================
+# Cortivex Pipeline Template: Dependency Update
+# =============================================================================
+# Safely updates project dependencies:
+#   1. Updates packages to latest compatible versions, checks for breaking changes
+#   2. Runs the test suite to validate updates don't break anything
+#   3. Creates a pull request documenting all changes
+#
+# Usage:
+#   /cortivex run dependency-update
+#   /cortivex run dependency-update --param update_scope=security-only
+#   /cortivex run dependency-update --param include_dev=false
+# =============================================================================
+
+name: dependency-update
+version: "1.0"
+description: Update project dependencies safely, run tests to verify, and create a PR with the changes
+tags: [dependencies, update, maintenance, security, packages]
+estimated_cost: "$0.03"
+estimated_duration: "3m"
+
+params:
+  update_scope:
+    type: string
+    default: all
+    description: "Update scope: all, security-only, major, minor, patch"
+  include_dev:
+    type: boolean
+    default: true
+    description: Whether to update devDependencies
+  package_manager:
+    type: string
+    default: auto
+    description: "Package manager: auto, npm, yarn, pnpm, pip, cargo"
+  base_branch:
+    type: string
+    default: main
+    description: Target branch for the PR
+
+nodes:
+  # ---------------------------------------------------------------------------
+  # Node 1: DependencyUpdater
+  # Analyzes current dependencies, checks for available updates, reviews
+  # changelogs for breaking changes, and applies updates. Respects
+  # semver ranges defined in the manifest file.
+  # ---------------------------------------------------------------------------
+  - id: dep_update
+    type: DependencyUpdater
+    depends_on: []
+    config:
+      model: claude-sonnet-4-20250514
+      update_scope: "${params.update_scope}"
+      package_manager: "${params.package_manager}"
+      include_dev: "${params.include_dev}"
+      respect_ranges: true
+      check_breaking: true
+      auto_migrate: true
+      lockfile_update: true
+      max_updates: 30
+
+  # ---------------------------------------------------------------------------
+  # Node 2: TestRunner
+  # Runs the full test suite after dependency updates to catch any
+  # compatibility issues or behavioral changes from updated packages.
+  # ---------------------------------------------------------------------------
+  - id: test_run
+    type: TestRunner
+    depends_on: [dep_update]
+    config:
+      model: claude-haiku-4-20250414
+      test_command: auto
+      coverage_enabled: true
+      coverage_threshold: 0
+      timeout_seconds: 300
+      fail_fast: false
+      parallel: true
+      retry_flaky: 2
+    retry:
+      max_attempts: 2
+      backoff: fixed
+      base_delay_seconds: 10
+      retry_on: [timeout, transient_error]
+
+  # ---------------------------------------------------------------------------
+  # Node 3: PRCreator
+  # Creates a pull request documenting all dependency changes:
+  #   - List of updated packages with old -> new versions
+  #   - Any breaking changes noted from changelogs
+  #   - Test results summary
+  #   - Security fixes included
+  # ---------------------------------------------------------------------------
+  - id: pr_create
+    type: PRCreator
+    depends_on: [test_run]
+    config:
+      model: claude-haiku-4-20250414
+      action: create
+      title_format: conventional
+      include_summary: true
+      include_checklist: true
+      include_test_results: true
+      labels:
+        - dependencies
+        - cortivex-generated
+      draft: false
+      base_branch: "${params.base_branch}"
+      link_issues: true

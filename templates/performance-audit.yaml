@@ -1,0 +1,116 @@
+# =============================================================================
+# Cortivex Pipeline Template: Performance Audit
+# =============================================================================
+# Identifies and fixes performance bottlenecks:
+#   1. Profiles code for algorithmic complexity, memory issues, N+1 queries
+#   2. Auto-fixes identified performance issues
+#   3. Runs tests to validate fixes don't break functionality
+#
+# Usage:
+#   /cortivex run performance-audit
+#   /cortivex run performance-audit --param target_path=src/api/
+#   /cortivex run performance-audit --param profile_scope=hot_paths
+# =============================================================================
+
+name: performance-audit
+version: "1.0"
+description: Profile code for performance bottlenecks, auto-fix issues, and validate with tests
+tags: [performance, optimization, profiling, bottlenecks, speed]
+estimated_cost: "$0.05"
+estimated_duration: "4m"
+
+params:
+  target_path:
+    type: string
+    default: ./
+    description: Directory to profile
+  profile_scope:
+    type: string
+    default: full
+    description: "Scope: changed_files, full, directory, hot_paths"
+  fix_performance:
+    type: boolean
+    default: true
+    description: Whether to auto-fix identified performance issues
+
+nodes:
+  # ---------------------------------------------------------------------------
+  # Node 1: PerformanceProfiler
+  # Analyzes code for performance bottlenecks:
+  #   - Algorithm complexity analysis (O(n^2) loops, inefficient data structures)
+  #   - Memory allocation patterns (excessive object creation, leaks)
+  #   - Database query efficiency (N+1 queries, missing indexes, full scans)
+  #   - Network call patterns (sequential when could be parallel)
+  #   - Caching opportunities (repeated expensive computations)
+  #   - Bundle size analysis (large imports, tree-shaking failures)
+  #   - Render performance (unnecessary re-renders in React/Vue)
+  # Reports bottlenecks with severity, current complexity, and suggestions.
+  # ---------------------------------------------------------------------------
+  - id: perf_profile
+    type: PerformanceProfiler
+    depends_on: []
+    config:
+      model: claude-sonnet-4-20250514
+      profile_scope: "${params.profile_scope}"
+      target_path: "${params.target_path}"
+      check_categories:
+        - algorithm-complexity
+        - memory-allocation
+        - database-queries
+        - network-calls
+        - caching-opportunities
+        - bundle-size
+        - render-performance
+      include_benchmarks: true
+      complexity_analysis: true
+
+  # ---------------------------------------------------------------------------
+  # Node 2: AutoFixer
+  # Applies performance optimizations identified by the profiler:
+  #   - Replaces O(n^2) algorithms with O(n log n) or O(n) alternatives
+  #   - Adds caching for repeated computations
+  #   - Converts sequential async calls to parallel (Promise.all)
+  #   - Fixes N+1 queries with JOINs or batch fetching
+  #   - Adds memoization where beneficial
+  # Only runs if fix_performance is true.
+  # ---------------------------------------------------------------------------
+  - id: auto_fix
+    type: AutoFixer
+    depends_on: [perf_profile]
+    condition:
+      if: "${params.fix_performance} == true"
+      skip_message: "Auto-fix disabled; review the profiler report for manual optimization"
+    config:
+      model: claude-sonnet-4-20250514
+      fix_categories:
+        - performance
+      require_confirmation: false
+      create_backup: true
+      max_files: 30
+      fix_mode: minimal
+      preserve_formatting: true
+      validate_fixes: true
+
+  # ---------------------------------------------------------------------------
+  # Node 3: TestRunner
+  # Runs the test suite after performance fixes to validate that
+  # optimizations did not change behavior. Performance improvements
+  # should be transparent to consumers.
+  # ---------------------------------------------------------------------------
+  - id: test_run
+    type: TestRunner
+    depends_on: [auto_fix]
+    config:
+      model: claude-haiku-4-20250414
+      test_command: auto
+      coverage_enabled: true
+      coverage_threshold: 70
+      timeout_seconds: 300
+      fail_fast: false
+      parallel: true
+      retry_flaky: 1
+    retry:
+      max_attempts: 2
+      backoff: fixed
+      base_delay_seconds: 5
+      retry_on: [timeout, transient_error]

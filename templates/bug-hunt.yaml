@@ -1,0 +1,145 @@
+# =============================================================================
+# Cortivex Pipeline Template: Bug Hunt
+# =============================================================================
+# Actively searches for bugs, fixes them, and validates the fixes:
+#   1. Hunts for bugs including null safety, race conditions, edge cases
+#   2. Auto-fixes identified bugs with minimal, targeted changes
+#   3. Generates regression tests for each fixed bug
+#   4. Runs the full test suite to confirm fixes and no regressions
+#
+# Usage:
+#   /cortivex run bug-hunt
+#   /cortivex run bug-hunt --param target_path=src/services/
+#   /cortivex run bug-hunt --param hunt_scope=full --verbose
+# =============================================================================
+
+name: bug-hunt
+version: "1.0"
+description: Find bugs across the codebase, auto-fix them, generate regression tests, and validate
+tags: [bugs, debugging, auto-fix, testing, quality]
+estimated_cost: "$0.06"
+estimated_duration: "5m"
+
+params:
+  target_path:
+    type: string
+    default: ./
+    description: Directory to search for bugs
+  hunt_scope:
+    type: string
+    default: changed_files
+    description: "Scope: changed_files, full, directory"
+  fix_mode:
+    type: string
+    default: minimal
+    description: "Fix aggressiveness: minimal, comprehensive"
+
+nodes:
+  # ---------------------------------------------------------------------------
+  # Node 1: BugHunter
+  # Actively searches for bugs across the codebase:
+  #   - Null pointer / undefined access
+  #   - Off-by-one errors in loops and array operations
+  #   - Race conditions in async code
+  #   - Resource leaks (unclosed handles, streams, connections)
+  #   - Type coercion bugs (JavaScript == vs ===)
+  #   - Boundary condition failures
+  #   - Error propagation issues (swallowed errors, wrong error types)
+  #   - State mutation bugs
+  # Reports findings with confidence levels and reproduction steps.
+  # ---------------------------------------------------------------------------
+  - id: bug_hunt
+    type: BugHunter
+    depends_on: []
+    config:
+      model: claude-sonnet-4-20250514
+      hunt_scope: "${params.hunt_scope}"
+      target_path: "${params.target_path}"
+      bug_categories:
+        - null-safety
+        - off-by-one
+        - race-conditions
+        - resource-leaks
+        - type-coercion
+        - boundary-conditions
+        - error-propagation
+        - state-mutations
+      include_edge_cases: true
+      trace_data_flow: true
+      max_depth: 5
+      report_confidence: true
+
+  # ---------------------------------------------------------------------------
+  # Node 2: AutoFixer
+  # Applies targeted fixes for bugs found by BugHunter:
+  #   - Adds null checks and guard clauses
+  #   - Fixes off-by-one errors
+  #   - Adds proper error handling
+  #   - Fixes type coercion issues
+  # Only fixes bugs with medium or higher confidence.
+  # Creates backups of all modified files.
+  # ---------------------------------------------------------------------------
+  - id: auto_fix
+    type: AutoFixer
+    depends_on: [bug_hunt]
+    config:
+      model: claude-sonnet-4-20250514
+      fix_categories:
+        - bugs
+        - security
+      require_confirmation: false
+      create_backup: true
+      max_files: 30
+      fix_mode: "${params.fix_mode}"
+      preserve_formatting: true
+      validate_fixes: true
+
+  # ---------------------------------------------------------------------------
+  # Node 3: TestGenerator
+  # Generates regression tests specifically for each fixed bug:
+  #   - Tests the exact scenario that would trigger the bug
+  #   - Tests edge cases around the fix
+  #   - Tests that error handling works correctly
+  # Ensures bugs do not resurface in future changes.
+  # ---------------------------------------------------------------------------
+  - id: regression_tests
+    type: TestGenerator
+    depends_on: [auto_fix]
+    config:
+      model: claude-sonnet-4-20250514
+      test_scope: changed_files
+      test_framework: auto
+      test_style: arrange-act-assert
+      coverage_target: 90
+      include_edge_cases: true
+      include_error_cases: true
+      mock_strategy: minimal
+      output_directory: auto
+      naming_convention: auto
+      max_tests_per_file: 10
+
+  # ---------------------------------------------------------------------------
+  # Node 4: TestRunner
+  # Runs the full test suite including newly generated regression tests.
+  # Validates that:
+  #   - All bug fixes work correctly
+  #   - No existing tests were broken by the fixes
+  #   - Coverage meets the threshold
+  # ---------------------------------------------------------------------------
+  - id: test_run
+    type: TestRunner
+    depends_on: [regression_tests]
+    config:
+      model: claude-haiku-4-20250414
+      test_command: auto
+      coverage_enabled: true
+      coverage_threshold: 75
+      timeout_seconds: 300
+      fail_fast: false
+      parallel: true
+      retry_flaky: 1
+    retry:
+      max_attempts: 2
+      backoff: fixed
+      base_delay_seconds: 5
+      retry_on: [timeout, transient_error]

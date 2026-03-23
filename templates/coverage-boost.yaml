@@ -1,0 +1,158 @@
+# =============================================================================
+# Cortivex Pipeline Template: Coverage Boost
+# =============================================================================
+# Systematically increases test coverage across the codebase:
+#   1. Analyzes architecture to identify untested modules and functions
+#   2. Generates unit tests targeting the biggest coverage gaps
+#   3. Generates end-to-end tests for uncovered user workflows
+#   4. Runs all tests and reports coverage improvement
+#
+# Usage:
+#   /cortivex run coverage-boost
+#   /cortivex run coverage-boost --param coverage_target=90
+#   /cortivex run coverage-boost --param target_path=src/services/
+# =============================================================================
+
+name: coverage-boost
+version: "1.0"
+description: Analyze coverage gaps, generate unit and E2E tests, and validate improved coverage
+tags: [testing, coverage, unit-tests, e2e, quality]
+estimated_cost: "$0.08"
+estimated_duration: "7m"
+
+params:
+  target_path:
+    type: string
+    default: src/
+    description: Directory to boost coverage for
+  coverage_target:
+    type: number
+    default: 85
+    description: Target coverage percentage to achieve
+  test_framework:
+    type: string
+    default: auto
+    description: "Test framework: auto, jest, vitest, mocha, pytest"
+  include_e2e:
+    type: boolean
+    default: true
+    description: Whether to generate end-to-end tests in addition to unit tests
+  max_tests_per_file:
+    type: number
+    default: 15
+    description: Maximum tests to generate per source file
+
+nodes:
+  # ---------------------------------------------------------------------------
+  # Node 1: ArchitectAnalyzer
+  # Analyzes the codebase to identify:
+  #   - Modules and functions with lowest coverage
+  #   - Critical paths that must be tested (auth, payments, data mutations)
+  #   - Dependencies between modules (test order matters)
+  #   - Existing test patterns and conventions to follow
+  #   - Entry points for E2E test scenarios
+  # ---------------------------------------------------------------------------
+  - id: architect
+    type: ArchitectAnalyzer
+    depends_on: []
+    config:
+      model: claude-sonnet-4-20250514
+      target_path: "${params.target_path}"
+      analyze_dependencies: true
+      detect_patterns: true
+      detect_antipatterns: false
+      map_entry_points: true
+      include_metrics: true
+      ignore_paths:
+        - node_modules/
+        - vendor/
+        - dist/
+        - build/
+        - coverage/
+
+  # ---------------------------------------------------------------------------
+  # Node 2: TestGenerator
+  # Generates unit tests targeting the biggest coverage gaps:
+  #   - Prioritizes untested critical paths (auth, data, business logic)
+  #   - Generates tests for each untested function and branch
+  #   - Includes edge cases (null, empty, boundary values)
+  #   - Includes error path tests (exceptions, rejections)
+  #   - Follows existing test conventions detected by ArchitectAnalyzer
+  # ---------------------------------------------------------------------------
+  - id: unit_tests
+    type: TestGenerator
+    depends_on: [architect]
+    config:
+      model: claude-sonnet-4-20250514
+      test_scope: uncovered
+      target_path: "${params.target_path}"
+      test_framework: "${params.test_framework}"
+      test_style: arrange-act-assert
+      coverage_target: "${params.coverage_target}"
+      include_edge_cases: true
+      include_error_cases: true
+      mock_strategy: minimal
+      output_directory: auto
+      naming_convention: auto
+      max_tests_per_file: "${params.max_tests_per_file}"
+
+  # ---------------------------------------------------------------------------
+  # Node 3: E2ETestWriter
+  # Generates end-to-end tests for critical user workflows that
+  # are not covered by unit tests alone:
+  #   - Full authentication flows
+  #   - Data creation, modification, and deletion workflows
+  #   - Multi-step business processes
+  #   - Error recovery scenarios
+  # Only runs if include_e2e is true.
+  # ---------------------------------------------------------------------------
+  - id: e2e_tests
+    type: E2ETestWriter
+    depends_on: [architect]
+    condition:
+      if: "${params.include_e2e} == true"
+      skip_message: "E2E test generation disabled via include_e2e=false"
+    config:
+      model: claude-sonnet-4-20250514
+      framework: auto
+      target_flows:
+        - login
+        - registration
+        - core-workflow
+        - data-management
+        - error-recovery
+      base_url: http://localhost:3000
+      include_accessibility: true
+      browser: chromium
+      timeout_per_test: 30000
+      retry_flaky: 2
+      output_directory: tests/e2e/
+
+  # ---------------------------------------------------------------------------
+  # Node 4: TestRunner
+  # Runs all tests (existing + generated) and reports coverage metrics.
+  # Validates that:
+  #   - All generated tests pass
+  #   - Coverage target is met
+  #   - No existing tests were broken
+  # Reports the coverage improvement delta.
+  # ---------------------------------------------------------------------------
+  - id: test_run
+    type: TestRunner
+    depends_on: [unit_tests, e2e_tests]
+    config:
+      model: claude-haiku-4-20250414
+      test_command: auto
+      coverage_enabled: true
+      coverage_threshold: "${params.coverage_target}"
+      coverage_report: lcov
+      timeout_seconds: 600
+      fail_fast: false
+      parallel: true
+      retry_flaky: 2
+      output_verbose: true
+    retry:
+      max_attempts: 2
+      backoff: fixed
+      base_delay_seconds: 10
+      retry_on: [timeout, transient_error]

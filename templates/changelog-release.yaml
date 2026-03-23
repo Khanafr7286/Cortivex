@@ -1,0 +1,119 @@
+# =============================================================================
+# Cortivex Pipeline Template: Changelog & Release
+# =============================================================================
+# Generates release artifacts and creates a release PR:
+#   1. Generates a changelog from git history since last tag
+#   2. Updates project documentation (README version, API docs)
+#   3. Creates a pull request with all release changes
+#
+# Usage:
+#   /cortivex run changelog-release
+#   /cortivex run changelog-release --param version=2.1.0
+#   /cortivex run changelog-release --param base_branch=develop
+# =============================================================================
+
+name: changelog-release
+version: "1.0"
+description: Generate changelog from git history, update documentation, and create a release pull request
+tags: [changelog, release, documentation, pr, versioning]
+estimated_cost: "$0.03"
+estimated_duration: "2m"
+
+params:
+  version:
+    type: string
+    default: null
+    description: Release version (auto-detected from package.json/Cargo.toml if null)
+  base_branch:
+    type: string
+    default: main
+    description: Target branch for the release PR
+  changelog_since:
+    type: string
+    default: last-tag
+    description: "Starting point for changelog: last-tag, last-release, <date>, <commit>"
+  include_authors:
+    type: boolean
+    default: true
+    description: Include author names in changelog entries
+
+nodes:
+  # ---------------------------------------------------------------------------
+  # Node 1: ChangelogWriter
+  # Generates the release changelog from git commit history:
+  #   - Parses conventional commits and PR titles
+  #   - Categorizes changes: Added, Changed, Fixed, Security, etc.
+  #   - Includes links to PRs and issues
+  #   - Lists contributing authors
+  #   - Follows Keep a Changelog format
+  # Runs first with no dependencies.
+  # ---------------------------------------------------------------------------
+  - id: changelog
+    type: ChangelogWriter
+    depends_on: []
+    config:
+      model: claude-haiku-4-20250414
+      format: keep-a-changelog
+      source: both
+      since: "${params.changelog_since}"
+      categories:
+        - Added
+        - Changed
+        - Deprecated
+        - Removed
+        - Fixed
+        - Security
+      include_authors: "${params.include_authors}"
+      include_pr_links: true
+      output_file: CHANGELOG.md
+      prepend: true
+
+  # ---------------------------------------------------------------------------
+  # Node 2: DocWriter
+  # Updates project documentation for the release:
+  #   - Bumps version references in README and docs
+  #   - Updates API documentation with any new endpoints or changes
+  #   - Ensures installation instructions match the new version
+  #   - Validates all internal documentation links
+  # Runs after changelog so it can reference the changelog in docs.
+  # ---------------------------------------------------------------------------
+  - id: doc_update
+    type: DocWriter
+    depends_on: [changelog]
+    config:
+      model: claude-sonnet-4-20250514
+      doc_types:
+        - readme
+        - api
+      output_format: markdown
+      include_examples: true
+      include_diagrams: false
+      update_mode: merge
+      toc_generation: true
+      link_validation: true
+
+  # ---------------------------------------------------------------------------
+  # Node 3: PRCreator
+  # Creates the release pull request containing:
+  #   - Updated CHANGELOG.md
+  #   - Updated documentation
+  #   - Version bumps
+  # Includes a structured description with the changelog summary,
+  # links to notable changes, and a release checklist.
+  # ---------------------------------------------------------------------------
+  - id: pr_create
+    type: PRCreator
+    depends_on: [doc_update]
+    config:
+      model: claude-haiku-4-20250414
+      action: create
+      title_format: conventional
+      include_summary: true
+      include_checklist: true
+      include_test_results: false
+      labels:
+        - release
+        - cortivex-generated
+      draft: false
+      base_branch: "${params.base_branch}"
+      link_issues: true

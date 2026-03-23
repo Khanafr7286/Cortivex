@@ -1,0 +1,145 @@
+# =============================================================================
+# Cortivex Pipeline Template: Documentation Refresh
+# =============================================================================
+# Analyzes the codebase and regenerates all documentation:
+#   1. Analyzes architecture to understand module structure and APIs
+#   2. Generates human-readable code explanations
+#   3. Writes/updates README, API docs, setup guides
+#   4. Generates a changelog from recent git history
+#
+# Usage:
+#   /cortivex run documentation-refresh
+#   /cortivex run documentation-refresh --param target_path=src/api/
+#   /cortivex run documentation-refresh --param audience=junior
+# =============================================================================
+
+name: documentation-refresh
+version: "1.0"
+description: Analyze codebase architecture and regenerate README, API docs, code explanations, and changelog
+tags: [documentation, readme, api-docs, changelog, onboarding]
+estimated_cost: "$0.07"
+estimated_duration: "5m"
+
+params:
+  target_path:
+    type: string
+    default: ./
+    description: Root directory to document
+  audience:
+    type: string
+    default: mid
+    description: "Target audience level: junior, mid, senior, non-technical"
+  include_changelog:
+    type: boolean
+    default: true
+    description: Whether to generate a changelog from git history
+  doc_format:
+    type: string
+    default: markdown
+    description: "Output format: markdown, html"
+
+nodes:
+  # ---------------------------------------------------------------------------
+  # Node 1: ArchitectAnalyzer
+  # Analyzes the full codebase to map module structure, APIs, dependencies,
+  # entry points, and patterns. This context drives all documentation
+  # generation downstream.
+  # ---------------------------------------------------------------------------
+  - id: architect
+    type: ArchitectAnalyzer
+    depends_on: []
+    config:
+      model: claude-sonnet-4-20250514
+      target_path: "${params.target_path}"
+      analyze_dependencies: true
+      detect_patterns: true
+      detect_antipatterns: false
+      map_entry_points: true
+      include_metrics: true
+      ignore_paths:
+        - node_modules/
+        - vendor/
+        - dist/
+        - build/
+        - .git/
+        - coverage/
+
+  # ---------------------------------------------------------------------------
+  # Node 2: CodeExplainer
+  # Produces human-readable explanations of the codebase:
+  #   - Module-level overviews explaining purpose and responsibilities
+  #   - Data flow diagrams (mermaid format)
+  #   - Key function and class documentation
+  #   - Design decision explanations (why, not just what)
+  # Adapts language complexity to the target audience.
+  # ---------------------------------------------------------------------------
+  - id: explainer
+    type: CodeExplainer
+    depends_on: [architect]
+    config:
+      model: claude-sonnet-4-20250514
+      explain_scope: full
+      target_path: "${params.target_path}"
+      audience: "${params.audience}"
+      include_diagrams: true
+      include_examples: true
+      explain_why: true
+      link_to_source: true
+      output_format: "${params.doc_format}"
+      max_depth: 3
+
+  # ---------------------------------------------------------------------------
+  # Node 3: DocWriter
+  # Generates or updates project documentation files:
+  #   - README.md with project overview, setup, and usage
+  #   - API documentation with endpoint/function references
+  #   - Architecture guide with module map
+  #   - Setup/installation guide
+  # Merges with existing docs to preserve manual additions.
+  # ---------------------------------------------------------------------------
+  - id: doc_write
+    type: DocWriter
+    depends_on: [explainer]
+    config:
+      model: claude-sonnet-4-20250514
+      doc_types:
+        - readme
+        - api
+        - architecture
+        - setup-guide
+      target_path: "${params.target_path}"
+      output_format: "${params.doc_format}"
+      include_examples: true
+      include_diagrams: true
+      update_mode: merge
+      toc_generation: true
+      link_validation: true
+
+  # ---------------------------------------------------------------------------
+  # Node 4: ChangelogWriter
+  # Generates a changelog from git commit history since the last tag.
+  # Categorizes changes into Added, Changed, Fixed, etc.
+  # Only runs if include_changelog is true.
+  # ---------------------------------------------------------------------------
+  - id: changelog
+    type: ChangelogWriter
+    depends_on: [architect]
+    condition:
+      if: "${params.include_changelog} == true"
+      skip_message: "Changelog generation disabled via include_changelog=false"
+    config:
+      model: claude-haiku-4-20250414
+      format: keep-a-changelog
+      source: both
+      since: last-tag
+      categories:
+        - Added
+        - Changed
+        - Deprecated
+        - Removed
+        - Fixed
+        - Security
+      include_authors: true
+      include_pr_links: true
+      output_file: CHANGELOG.md
+      prepend: true

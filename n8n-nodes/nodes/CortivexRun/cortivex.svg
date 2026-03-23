@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 60" width="60" height="60">
+  <!-- Background circle -->
+  <circle cx="30" cy="30" r="28" fill="#0a1628" stroke="#00e5ff" stroke-width="1.5"/>
+
+  <!-- Connection lines -->
+  <line x1="30" y1="15" x2="16" y2="35" stroke="#00e5ff" stroke-width="1.5" opacity="0.6"/>
+  <line x1="30" y1="15" x2="44" y2="35" stroke="#00e5ff" stroke-width="1.5" opacity="0.6"/>
+  <line x1="16" y1="35" x2="44" y2="35" stroke="#00e5ff" stroke-width="1.5" opacity="0.6"/>
+  <line x1="16" y1="35" x2="30" y2="47" stroke="#00e5ff" stroke-width="1.5" opacity="0.6"/>
+  <line x1="44" y1="35" x2="30" y2="47" stroke="#00e5ff" stroke-width="1.5" opacity="0.6"/>
+
+  <!-- Top node (primary) -->
+  <circle cx="30" cy="15" r="5" fill="#00e5ff"/>
+  <circle cx="30" cy="15" r="2.5" fill="#0a1628"/>
+
+  <!-- Left node -->
+  <circle cx="16" cy="35" r="4.5" fill="#00e5ff"/>
+  <circle cx="16" cy="35" r="2" fill="#0a1628"/>
+
+  <!-- Right node -->
+  <circle cx="44" cy="35" r="4.5" fill="#00e5ff"/>
+  <circle cx="44" cy="35" r="2" fill="#0a1628"/>
+
+  <!-- Bottom node -->
+  <circle cx="30" cy="47" r="4" fill="#00e5ff"/>
+  <circle cx="30" cy="47" r="1.8" fill="#0a1628"/>
+
+  <!-- Center glow dot -->
+  <circle cx="30" cy="30" r="2" fill="#00e5ff" opacity="0.8"/>
+</svg>

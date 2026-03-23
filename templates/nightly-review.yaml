@@ -1,0 +1,144 @@
+# =============================================================================
+# Cortivex Pipeline Template: Nightly Review
+# =============================================================================
+# Comprehensive nightly code quality and security scan:
+#   1. Scans for security vulnerabilities and newly introduced risks
+#   2. Reviews code quality across the day's changes
+#   3. Hunts for bugs in recently modified code
+#   4. Generates a daily quality report summarizing all findings
+#
+# Designed to run on a schedule (e.g., every night at 2 AM) to catch
+# issues before they accumulate.
+#
+# Usage:
+#   /cortivex run nightly-review
+#   /cortivex run nightly-review --param since=yesterday
+#   /cortivex run nightly-review --verbose
+# =============================================================================
+
+name: nightly-review
+version: "1.0"
+description: Nightly security, quality, and bug scan across the day's changes with a daily report
+tags: [nightly, review, security, quality, scheduled, ci]
+estimated_cost: "$0.05"
+estimated_duration: "5m"
+
+params:
+  since:
+    type: string
+    default: "24h"
+    description: "Time range to scan: 24h, yesterday, last-commit, <git-ref>"
+  severity_threshold:
+    type: string
+    default: low
+    description: "Minimum severity to report: low, medium, high, critical"
+  report_output:
+    type: string
+    default: nightly-report.md
+    description: Output file for the nightly report
+
+nodes:
+  # ---------------------------------------------------------------------------
+  # Node 1: SecurityScanner
+  # Scans files changed in the last 24 hours for security issues.
+  # Checks for newly introduced vulnerabilities, exposed secrets,
+  # and dependency changes that affect security posture.
+  # Runs in parallel with CodeReviewer for faster completion.
+  # ---------------------------------------------------------------------------
+  - id: security_scan
+    type: SecurityScanner
+    depends_on: []
+    config:
+      model: claude-sonnet-4-20250514
+      scan_depth: standard
+      check_dependencies: true
+      check_secrets: true
+      check_patterns: true
+      severity_threshold: "${params.severity_threshold}"
+      ignore_paths:
+        - node_modules/
+        - vendor/
+        - dist/
+        - build/
+      max_files: 500
+      output_format: structured
+
+  # ---------------------------------------------------------------------------
+  # Node 2: CodeReviewer
+  # Reviews the day's code changes for quality issues:
+  #   - Error handling gaps
+  #   - Complexity increases
+  #   - Naming convention violations
+  #   - DRY violations (copy-paste code)
+  #   - Dead code introduction
+  # Runs in parallel with SecurityScanner.
+  # ---------------------------------------------------------------------------
+  - id: code_review
+    type: CodeReviewer
+    depends_on: []
+    config:
+      model: claude-sonnet-4-20250514
+      review_scope: changed_files
+      check_patterns:
+        - error-handling
+        - naming-conventions
+        - complexity
+        - dry-violations
+        - dead-code
+        - type-safety
+        - edge-cases
+        - documentation
+      max_issues: 100
+      severity_levels: true
+      suggest_fixes: true
+      complexity_threshold: 15
+
+  # ---------------------------------------------------------------------------
+  # Node 3: BugHunter
+  # Hunts for bugs in recently changed code. Focuses on common
+  # regression patterns and issues introduced by new changes.
+  # Runs after security scan and code review to benefit from their
+  # findings as additional context.
+  # ---------------------------------------------------------------------------
+  - id: bug_hunt
+    type: BugHunter
+    depends_on: [security_scan, code_review]
+    config:
+      model: claude-sonnet-4-20250514
+      hunt_scope: changed_files
+      bug_categories:
+        - null-safety
+        - off-by-one
+        - race-conditions
+        - resource-leaks
+        - type-coercion
+        - boundary-conditions
+        - error-propagation
+      include_edge_cases: true
+      trace_data_flow: true
+      max_depth: 4
+      report_confidence: true
+
+  # ---------------------------------------------------------------------------
+  # Node 4: DocWriter
+  # Generates the nightly quality report combining all findings:
+  #   - Executive summary: overall health score
+  #   - Security findings (vulnerabilities, secrets, CVEs)
+  #   - Code quality issues (complexity, style, patterns)
+  #   - Bug findings (potential defects, edge cases)
+  #   - Trend comparison vs previous nightly runs
+  #   - Priority action items for the team
+  # Outputs to the configured report file.
+  # ---------------------------------------------------------------------------
+  - id: nightly_report
+    type: DocWriter
+    depends_on: [bug_hunt]
+    config:
+      model: claude-sonnet-4-20250514
+      doc_types:
+        - quality-report
+      output_format: markdown
+      include_examples: false
+      include_diagrams: false
+      update_mode: overwrite
+      toc_generation: true

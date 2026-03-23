@@ -1,0 +1,120 @@
+# =============================================================================
+# Cortivex Pipeline Template: Security Audit
+# =============================================================================
+# Performs a deep security analysis of the codebase:
+#   1. Scans for vulnerabilities, secrets, insecure patterns, and CVEs
+#   2. Hunts for security-specific bugs (injection, auth bypass, IDOR, etc.)
+#   3. Generates a structured security report documenting all findings
+#
+# Usage:
+#   /cortivex run security-audit
+#   /cortivex run security-audit --param scan_depth=deep
+#   /cortivex run security-audit --param severity_threshold=low --verbose
+# =============================================================================
+
+name: security-audit
+version: "1.0"
+description: Deep security analysis scanning for vulnerabilities, security bugs, and generating a comprehensive report
+tags: [security, audit, vulnerabilities, cve, report]
+estimated_cost: "$0.06"
+estimated_duration: "4m"
+
+params:
+  scan_depth:
+    type: string
+    default: deep
+    description: "Scan depth: shallow, standard, deep"
+  severity_threshold:
+    type: string
+    default: low
+    description: "Minimum severity to report: low, medium, high, critical"
+  target_path:
+    type: string
+    default: ./
+    description: Directory to audit
+  report_format:
+    type: string
+    default: markdown
+    description: "Report format: markdown, sarif, json"
+
+nodes:
+  # ---------------------------------------------------------------------------
+  # Node 1: SecurityScanner
+  # Performs deep vulnerability scanning across the entire codebase:
+  #   - Source code pattern analysis (SQL injection, XSS, CSRF, path traversal)
+  #   - Dependency CVE scanning against latest vulnerability databases
+  #   - Secret detection (API keys, tokens, passwords in source)
+  #   - Configuration review (CORS, CSP, cookie settings)
+  # Uses deep scan depth for thorough coverage.
+  # ---------------------------------------------------------------------------
+  - id: security_scan
+    type: SecurityScanner
+    depends_on: []
+    config:
+      model: claude-sonnet-4-20250514
+      scan_depth: "${params.scan_depth}"
+      check_dependencies: true
+      check_secrets: true
+      check_patterns: true
+      severity_threshold: "${params.severity_threshold}"
+      ignore_paths:
+        - node_modules/
+        - vendor/
+        - dist/
+        - build/
+      cve_database: latest
+      max_files: 1000
+      output_format: structured
+
+  # ---------------------------------------------------------------------------
+  # Node 2: BugHunter
+  # Hunts specifically for security-related bugs that the scanner may miss:
+  #   - Authentication bypass vulnerabilities
+  #   - Authorization flaws (IDOR, privilege escalation)
+  #   - Race conditions in security-critical code
+  #   - Cryptographic misuse (weak algorithms, improper key handling)
+  #   - Input validation gaps
+  # Runs in parallel with SecurityScanner for faster completion.
+  # ---------------------------------------------------------------------------
+  - id: bug_hunt
+    type: BugHunter
+    depends_on: []
+    config:
+      model: claude-sonnet-4-20250514
+      hunt_scope: full
+      target_path: "${params.target_path}"
+      bug_categories:
+        - null-safety
+        - race-conditions
+        - type-coercion
+        - boundary-conditions
+        - error-propagation
+        - state-mutations
+      include_edge_cases: true
+      trace_data_flow: true
+      max_depth: 8
+      report_confidence: true
+
+  # ---------------------------------------------------------------------------
+  # Node 3: DocWriter
+  # Generates a comprehensive security report combining findings from
+  # both SecurityScanner and BugHunter. The report includes:
+  #   - Executive summary with risk rating
+  #   - Detailed findings with severity, description, and remediation steps
+  #   - Dependency vulnerability inventory
+  #   - Prioritized remediation roadmap
+  #   - Compliance checklist (OWASP Top 10)
+  # ---------------------------------------------------------------------------
+  - id: security_report
+    type: DocWriter
+    depends_on: [security_scan, bug_hunt]
+    config:
+      model: claude-sonnet-4-20250514
+      doc_types:
+        - security-report
+      target_path: "${params.target_path}"
+      output_format: "${params.report_format}"
+      include_examples: true
+      include_diagrams: false
+      update_mode: create-only
+      toc_generation: true

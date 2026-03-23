@@ -1,0 +1,59 @@
+{
+  "name": "cortivex",
+  "version": "1.0.0",
+  "description": "AI agent pipeline orchestration with Claude Code skills, self-learning workflows, and zero-infrastructure coordination.",
+  "type": "module",
+  "main": "./packages/core/dist/index.js",
+  "types": "./packages/core/dist/index.d.ts",
+  "bin": {
+    "cortivex": "./packages/cli/dist/index.js"
+  },
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "dev": "npm run dev --workspace=packages/dashboard",
+    "test": "npm run test --workspaces --if-present",
+    "postinstall": "npm run build --workspaces --if-present 2>/dev/null || true",
+    "install-skills": "node scripts/install-skills.js"
+  },
+  "files": [
+    "packages/cli/dist/",
+    "packages/cli/package.json",
+    "packages/core/dist/",
+    "packages/core/package.json",
+    "packages/mcp-server/dist/",
+    "packages/mcp-server/package.json",
+    "packages/http-server/dist/",
+    "packages/http-server/package.json",
+    "packages/shared/",
+    ".agents/",
+    "templates/",
+    "assets/icons/",
+    "scripts/",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AhmedRaoofuddin/Cortivex.git"
+  },
+  "homepage": "https://github.com/AhmedRaoofuddin/Cortivex",
+  "bugs": {
+    "url": "https://github.com/AhmedRaoofuddin/Cortivex/issues"
+  },
+  "keywords": [
+    "claude-code",
+    "claude-code-skills",
+    "ai-agents",
+    "pipeline-orchestration",
+    "multi-agent",
+    "self-learning",
+    "mesh-coordination",
+    "raft-consensus",
+    "mcp-server",
+    "agent-skills"
+  ],
+  "author": "Ahmed Raoofuddin",
+  "license": "MIT",
+  "engines": { "node": ">=20" }
+}

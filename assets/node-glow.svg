@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <!-- Outer ambient glow -->
+    <radialGradient id="ambientGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#7c3aed" stop-opacity="0.4"/>
+      <stop offset="40%" stop-color="#7c3aed" stop-opacity="0.15"/>
+      <stop offset="70%" stop-color="#00e5ff" stop-opacity="0.05"/>
+      <stop offset="100%" stop-color="#00e5ff" stop-opacity="0"/>
+    </radialGradient>
+    <!-- Inner bright glow -->
+    <radialGradient id="innerGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#a855f7" stop-opacity="0.8"/>
+      <stop offset="50%" stop-color="#7c3aed" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#7c3aed" stop-opacity="0"/>
+    </radialGradient>
+    <!-- Ring pulse -->
+    <radialGradient id="ringPulse" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#00e5ff" stop-opacity="0"/>
+      <stop offset="70%" stop-color="#00e5ff" stop-opacity="0.15"/>
+      <stop offset="85%" stop-color="#00e5ff" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#00e5ff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <!-- Ambient outer glow -->
+  <circle cx="32" cy="32" r="32" fill="url(#ambientGlow)"/>
+  <!-- Pulse ring -->
+  <circle cx="32" cy="32" r="24" fill="url(#ringPulse)"/>
+  <!-- Inner glow -->
+  <circle cx="32" cy="32" r="16" fill="url(#innerGlow)"/>
+  <!-- Core bright dot -->
+  <circle cx="32" cy="32" r="6" fill="#7c3aed" opacity="0.9"/>
+  <circle cx="32" cy="32" r="3" fill="#a855f7"/>
+</svg>

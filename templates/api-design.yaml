@@ -1,0 +1,144 @@
+# =============================================================================
+# Cortivex Pipeline Template: API Design
+# =============================================================================
+# Designs or reviews API endpoints from codebase analysis:
+#   1. Analyzes existing architecture and data models
+#   2. Designs REST/GraphQL API schemas with endpoints and schemas
+#   3. Generates API integration tests
+#   4. Writes API documentation (OpenAPI spec + human-readable docs)
+#
+# Usage:
+#   /cortivex run api-design
+#   /cortivex run api-design --param api_style=graphql
+#   /cortivex run api-design --param target_path=src/models/
+# =============================================================================
+
+name: api-design
+version: "1.0"
+description: Analyze codebase, design API schemas and endpoints, generate tests, and produce API documentation
+tags: [api, design, rest, graphql, openapi, documentation]
+estimated_cost: "$0.08"
+estimated_duration: "6m"
+
+params:
+  target_path:
+    type: string
+    default: src/
+    description: Directory containing models/services to design API for
+  api_style:
+    type: string
+    default: rest
+    description: "API style: rest, graphql, grpc"
+  spec_format:
+    type: string
+    default: openapi-3.1
+    description: "Spec format: openapi-3.1, openapi-3.0, graphql-schema"
+  include_auth:
+    type: boolean
+    default: true
+    description: Whether to include authentication endpoint design
+
+nodes:
+  # ---------------------------------------------------------------------------
+  # Node 1: ArchitectAnalyzer
+  # Analyzes the codebase to understand:
+  #   - Data models and their relationships
+  #   - Existing service layer and business logic
+  #   - Current API patterns (if any exist)
+  #   - Database schema and query patterns
+  # This context ensures the API design matches the actual data model.
+  # ---------------------------------------------------------------------------
+  - id: architect
+    type: ArchitectAnalyzer
+    depends_on: []
+    config:
+      model: claude-sonnet-4-20250514
+      target_path: "${params.target_path}"
+      analyze_dependencies: true
+      detect_patterns: true
+      detect_antipatterns: false
+      map_entry_points: true
+      include_metrics: false
+      ignore_paths:
+        - node_modules/
+        - vendor/
+        - dist/
+        - build/
+        - tests/
+        - "*.test.*"
+
+  # ---------------------------------------------------------------------------
+  # Node 2: APIDesigner
+  # Designs the API based on the architecture analysis:
+  #   - Endpoint definitions (paths, methods, parameters)
+  #   - Request/response schemas with validation rules
+  #   - Authentication and authorization flows
+  #   - Pagination, filtering, and sorting patterns
+  #   - Error response schemas with status codes
+  #   - Rate limiting recommendations
+  #   - Versioning strategy
+  # Produces a complete OpenAPI/GraphQL specification.
+  # ---------------------------------------------------------------------------
+  - id: api_design
+    type: APIDesigner
+    depends_on: [architect]
+    config:
+      model: claude-sonnet-4-20250514
+      api_style: "${params.api_style}"
+      spec_format: "${params.spec_format}"
+      include_auth: "${params.include_auth}"
+      include_pagination: true
+      include_errors: true
+      include_examples: true
+      naming_convention: kebab-case
+      versioning: url-prefix
+      output_file: api-spec.yaml
+
+  # ---------------------------------------------------------------------------
+  # Node 3: TestGenerator
+  # Generates API integration tests based on the designed endpoints:
+  #   - Success case tests for each endpoint
+  #   - Error handling tests (400, 401, 403, 404, 422, 500)
+  #   - Input validation tests (missing fields, wrong types, boundaries)
+  #   - Authentication tests (valid token, expired token, no token)
+  #   - Pagination and filtering tests
+  # ---------------------------------------------------------------------------
+  - id: api_tests
+    type: TestGenerator
+    depends_on: [api_design]
+    config:
+      model: claude-sonnet-4-20250514
+      test_scope: all
+      test_framework: auto
+      test_style: arrange-act-assert
+      coverage_target: 85
+      include_edge_cases: true
+      include_error_cases: true
+      mock_strategy: comprehensive
+      output_directory: tests/api/
+      max_tests_per_file: 20
+
+  # ---------------------------------------------------------------------------
+  # Node 4: DocWriter
+  # Generates human-readable API documentation:
+  #   - API overview and getting started guide
+  #   - Endpoint reference with request/response examples
+  #   - Authentication guide
+  #   - Error handling reference
+  #   - SDK usage examples
+  # Complements the machine-readable OpenAPI spec.
+  # ---------------------------------------------------------------------------
+  - id: api_docs
+    type: DocWriter
+    depends_on: [api_design]
+    config:
+      model: claude-sonnet-4-20250514
+      doc_types:
+        - api
+        - setup-guide
+      output_format: markdown
+      include_examples: true
+      include_diagrams: true
+      update_mode: create-only
+      toc_generation: true
+      link_validation: true

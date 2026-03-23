@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#1f6feb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Speedometer/gauge outer arc -->
+  <path d="M12 22c5.52 0 10-4.48 10-10S17.52 2 12 2 2 6.48 2 12"/>
+  <!-- Gauge bottom cutoff -->
+  <path d="M2 12a10 10 0 0 0 2.05 6.1"/>
+  <path d="M19.95 18.1A10 10 0 0 0 22 12"/>
+  <!-- Tick marks -->
+  <line x1="12" y1="4" x2="12" y2="6"/>
+  <line x1="4" y1="12" x2="6" y2="12"/>
+  <line x1="20" y1="12" x2="18" y2="12"/>
+  <line x1="6.34" y1="6.34" x2="7.76" y2="7.76"/>
+  <line x1="17.66" y1="6.34" x2="16.24" y2="7.76"/>
+  <!-- Needle pointing to high performance -->
+  <line x1="12" y1="12" x2="16.5" y2="7.5" stroke-width="2.5"/>
+  <!-- Center dot -->
+  <circle cx="12" cy="12" r="2" fill="none"/>
+</svg>

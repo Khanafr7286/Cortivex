@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build output (dist/ tracked for npm install from GitHub)
+# dist/
+*.tsbuildinfo
+
+# Runtime data
+.cortivex/
+**/.cortivex/
+
+# Claude Code local config
+.claude/
+.claude-plugin/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test coverage
+coverage/
+
+# Temp files
+*.tmp
+*.temp
+10)

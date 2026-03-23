@@ -1,0 +1,141 @@
+# =============================================================================
+# Cortivex Pipeline Template: Full Test Suite
+# =============================================================================
+# Generates a comprehensive test suite for a codebase:
+#   1. Analyzes architecture to understand module boundaries and dependencies
+#   2. Generates unit tests for functions and classes lacking coverage
+#   3. Generates end-to-end tests for critical user workflows
+#   4. Runs all generated and existing tests to validate correctness
+#
+# Usage:
+#   /cortivex run full-test-suite
+#   /cortivex run full-test-suite --param target_path=src/services/
+#   /cortivex run full-test-suite --param coverage_target=90
+# =============================================================================
+
+name: full-test-suite
+version: "1.0"
+description: Analyze codebase architecture and generate comprehensive unit, integration, and end-to-end tests
+tags: [testing, unit-tests, e2e, coverage, test-generation]
+estimated_cost: "$0.08"
+estimated_duration: "5m"
+
+params:
+  target_path:
+    type: string
+    default: src/
+    description: Directory to generate tests for
+  coverage_target:
+    type: number
+    default: 80
+    description: Target test coverage percentage
+  test_framework:
+    type: string
+    default: auto
+    description: "Test framework to use: auto, jest, vitest, mocha, pytest"
+  include_e2e:
+    type: boolean
+    default: true
+    description: Whether to generate end-to-end tests
+
+nodes:
+  # ---------------------------------------------------------------------------
+  # Node 1: ArchitectAnalyzer
+  # Analyzes the codebase to understand module structure, entry points,
+  # dependency graph, and patterns. This context helps the test generators
+  # produce accurate, well-structured tests.
+  # ---------------------------------------------------------------------------
+  - id: architect
+    type: ArchitectAnalyzer
+    depends_on: []
+    config:
+      model: claude-sonnet-4-20250514
+      target_path: "${params.target_path}"
+      analyze_dependencies: true
+      detect_patterns: true
+      detect_antipatterns: false
+      map_entry_points: true
+      include_metrics: true
+      ignore_paths:
+        - node_modules/
+        - dist/
+        - build/
+        - coverage/
+        - "*.test.*"
+        - "*.spec.*"
+
+  # ---------------------------------------------------------------------------
+  # Node 2: TestGenerator
+  # Generates unit tests based on the architecture analysis. Focuses on
+  # untested code paths, edge cases, and error handling. Uses the detected
+  # test framework and follows existing test conventions.
+  # ---------------------------------------------------------------------------
+  - id: unit_tests
+    type: TestGenerator
+    depends_on: [architect]
+    config:
+      model: claude-sonnet-4-20250514
+      test_scope: uncovered
+      target_path: "${params.target_path}"
+      test_framework: "${params.test_framework}"
+      test_style: arrange-act-assert
+      coverage_target: "${params.coverage_target}"
+      include_edge_cases: true
+      include_error_cases: true
+      mock_strategy: minimal
+      output_directory: auto
+      naming_convention: auto
+      max_tests_per_file: 15
+
+  # ---------------------------------------------------------------------------
+  # Node 3: E2ETestWriter
+  # Generates end-to-end tests for critical user workflows identified by
+  # the architecture analysis. Uses Playwright by default.
+  # Only runs if include_e2e parameter is true.
+  # ---------------------------------------------------------------------------
+  - id: e2e_tests
+    type: E2ETestWriter
+    depends_on: [architect]
+    condition:
+      if: "${params.include_e2e} == true"
+      skip_message: "E2E test generation disabled via include_e2e=false"
+    config:
+      model: claude-sonnet-4-20250514
+      framework: auto
+      target_flows:
+        - login
+        - registration
+        - navigation
+        - core-workflow
+      base_url: http://localhost:3000
+      include_accessibility: true
+      browser: chromium
+      timeout_per_test: 30000
+      retry_flaky: 2
+      output_directory: tests/e2e/
+
+  # ---------------------------------------------------------------------------
+  # Node 4: TestRunner
+  # Runs all tests (existing + newly generated) and reports results.
+  # Validates that generated tests pass and checks overall coverage.
+  # Depends on both test generation nodes.
+  # ---------------------------------------------------------------------------
+  - id: test_run
+    type: TestRunner
+    depends_on: [unit_tests, e2e_tests]
+    config:
+      model: claude-haiku-4-20250414
+      test_command: auto
+      coverage_enabled: true
+      coverage_threshold: "${params.coverage_target}"
+      coverage_report: lcov
+      timeout_seconds: 600
+      fail_fast: false
+      parallel: true
+      retry_flaky: 2
+      output_verbose: true
+    retry:
+      max_attempts: 2
+      backoff: fixed
+      base_delay_seconds: 10
+      retry_on: [timeout, transient_error]

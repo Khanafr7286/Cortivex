@@ -1,0 +1,191 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640">
+  <defs>
+    <filter id="bn-connectionGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <filter id="bn-nodeGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <linearGradient id="bn-cyanFlow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00e5ff" stop-opacity="0.4"/>
+      <stop offset="50%" stop-color="#00e5ff" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#22d3ee" stop-opacity="0.4"/>
+    </linearGradient>
+    <radialGradient id="bn-purpleNode" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#a855f7"/>
+      <stop offset="60%" stop-color="#7c3aed"/>
+      <stop offset="100%" stop-color="#5b21b6"/>
+    </radialGradient>
+    <radialGradient id="bn-cyanNode" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#22d3ee"/>
+      <stop offset="100%" stop-color="#00e5ff"/>
+    </radialGradient>
+    <!-- Background gradient -->
+    <radialGradient id="bn-bg" cx="50%" cy="45%" r="55%">
+      <stop offset="0%" stop-color="#12121f"/>
+      <stop offset="100%" stop-color="#0a0a0f"/>
+    </radialGradient>
+    <!-- Subtle mesh pattern for background -->
+    <pattern id="meshPattern" x="0" y="0" width="80" height="80" patternUnits="userSpaceOnUse">
+      <circle cx="0" cy="0" r="1" fill="#00e5ff" opacity="0.06"/>
+      <circle cx="80" cy="0" r="1" fill="#7c3aed" opacity="0.06"/>
+      <circle cx="40" cy="40" r="1" fill="#22d3ee" opacity="0.04"/>
+      <circle cx="0" cy="80" r="1" fill="#7c3aed" opacity="0.06"/>
+      <circle cx="80" cy="80" r="1" fill="#00e5ff" opacity="0.06"/>
+      <line x1="0" y1="0" x2="40" y2="40" stroke="#00e5ff" stroke-width="0.3" opacity="0.04"/>
+      <line x1="80" y1="0" x2="40" y2="40" stroke="#7c3aed" stroke-width="0.3" opacity="0.04"/>
+      <line x1="40" y1="40" x2="0" y2="80" stroke="#7c3aed" stroke-width="0.3" opacity="0.04"/>
+      <line x1="40" y1="40" x2="80" y2="80" stroke="#00e5ff" stroke-width="0.3" opacity="0.04"/>
+    </pattern>
+    <!-- Text glow -->
+    <filter id="textGlow" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <!-- Gradient for title -->
+    <linearGradient id="bn-titleGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#f0f0f5"/>
+      <stop offset="50%" stop-color="#f0f0f5"/>
+      <stop offset="100%" stop-color="#c4b5fd"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1280" height="640" fill="url(#bn-bg)"/>
+  <rect width="1280" height="640" fill="url(#meshPattern)"/>
+
+  <!-- Decorative mesh lines extending from center outward -->
+  <g stroke="#00e5ff" stroke-width="0.5" opacity="0.08" fill="none">
+    <!-- Left side radiating lines -->
+    <line x1="640" y1="220" x2="80" y2="40"/>
+    <line x1="640" y1="220" x2="120" y2="180"/>
+    <line x1="640" y1="220" x2="60" y2="320"/>
+    <line x1="640" y1="220" x2="100" y2="480"/>
+    <line x1="640" y1="220" x2="200" y2="600"/>
+    <!-- Right side radiating lines -->
+    <line x1="640" y1="220" x2="1200" y2="40"/>
+    <line x1="640" y1="220" x2="1160" y2="180"/>
+    <line x1="640" y1="220" x2="1220" y2="320"/>
+    <line x1="640" y1="220" x2="1180" y2="480"/>
+    <line x1="640" y1="220" x2="1080" y2="600"/>
+  </g>
+  <g stroke="#7c3aed" stroke-width="0.5" opacity="0.06" fill="none">
+    <line x1="640" y1="220" x2="300" y2="20"/>
+    <line x1="640" y1="220" x2="40" y2="440"/>
+    <line x1="640" y1="220" x2="980" y2="20"/>
+    <line x1="640" y1="220" x2="1240" y2="440"/>
+  </g>
+
+  <!-- Scattered background nodes -->
+  <g opacity="0.12">
+    <circle cx="120" cy="80" r="2" fill="#00e5ff"/>
+    <circle cx="280" cy="50" r="1.5" fill="#7c3aed"/>
+    <circle cx="1000" cy="60" r="2" fill="#00e5ff"/>
+    <circle cx="1160" cy="90" r="1.5" fill="#7c3aed"/>
+    <circle cx="80" cy="400" r="1.5" fill="#22d3ee"/>
+    <circle cx="200" cy="560" r="2" fill="#7c3aed"/>
+    <circle cx="1100" cy="540" r="1.5" fill="#00e5ff"/>
+    <circle cx="1200" cy="380" r="2" fill="#22d3ee"/>
+    <circle cx="400" cy="600" r="1.5" fill="#7c3aed"/>
+    <circle cx="880" cy="590" r="1.5" fill="#00e5ff"/>
+    <circle cx="50" cy="240" r="1" fill="#00e5ff"/>
+    <circle cx="1230" cy="240" r="1" fill="#00e5ff"/>
+  </g>
+
+  <!-- Logo mark centered -->
+  <g transform="translate(520, 55) scale(0.35)">
+    <!-- Connections -->
+    <g filter="url(#bn-connectionGlow)" stroke="url(#bn-cyanFlow)" stroke-width="2.5" fill="none" stroke-linecap="round">
+      <path d="M 310,105 Q 250,80 185,110" opacity="0.9"/>
+      <path d="M 185,110 Q 120,145 105,210" opacity="0.9"/>
+      <path d="M 105,210 L 100,300" opacity="0.9"/>
+      <path d="M 100,300 Q 115,370 180,405" opacity="0.9"/>
+      <path d="M 180,405 Q 245,435 315,410" opacity="0.9"/>
+      <path d="M 310,105 L 260,175" opacity="0.7"/>
+      <path d="M 185,110 L 200,185" opacity="0.7"/>
+      <path d="M 105,210 L 185,230" opacity="0.7"/>
+      <path d="M 100,300 L 180,290" opacity="0.7"/>
+      <path d="M 180,405 L 195,330" opacity="0.7"/>
+      <path d="M 315,410 L 290,340" opacity="0.7"/>
+      <path d="M 260,175 L 200,185" opacity="0.6"/>
+      <path d="M 200,185 L 185,230" opacity="0.6"/>
+      <path d="M 185,230 L 180,290" opacity="0.6"/>
+      <path d="M 180,290 L 195,330" opacity="0.6"/>
+      <path d="M 195,330 L 290,340" opacity="0.6"/>
+      <path d="M 260,175 L 330,200" opacity="0.6"/>
+      <path d="M 330,200 L 350,260" opacity="0.6"/>
+      <path d="M 350,260 L 340,320" opacity="0.6"/>
+      <path d="M 340,320 L 290,340" opacity="0.6"/>
+      <path d="M 260,175 L 275,260" opacity="0.4"/>
+      <path d="M 200,185 L 275,260" opacity="0.4"/>
+      <path d="M 185,230 L 275,260" opacity="0.4"/>
+      <path d="M 275,260 L 350,260" opacity="0.4"/>
+      <path d="M 275,260 L 290,340" opacity="0.4"/>
+      <path d="M 275,260 L 195,330" opacity="0.4"/>
+      <path d="M 275,260 L 180,290" opacity="0.4"/>
+      <path d="M 330,200 L 310,105" opacity="0.5"/>
+      <path d="M 340,320 L 315,410" opacity="0.5"/>
+      <path d="M 200,185 L 180,290" opacity="0.3"/>
+      <path d="M 260,175 L 340,320" opacity="0.3"/>
+      <path d="M 330,200 L 195,330" opacity="0.3"/>
+      <path d="M 185,230 L 290,340" opacity="0.3"/>
+    </g>
+    <!-- Primary nodes -->
+    <g filter="url(#bn-nodeGlow)">
+      <circle cx="310" cy="105" r="14" fill="url(#bn-purpleNode)"/>
+      <circle cx="185" cy="110" r="13" fill="url(#bn-purpleNode)"/>
+      <circle cx="105" cy="210" r="15" fill="url(#bn-purpleNode)"/>
+      <circle cx="100" cy="300" r="14" fill="url(#bn-purpleNode)"/>
+      <circle cx="180" cy="405" r="13" fill="url(#bn-purpleNode)"/>
+      <circle cx="315" cy="410" r="14" fill="url(#bn-purpleNode)"/>
+    </g>
+    <!-- Secondary nodes -->
+    <g filter="url(#bn-nodeGlow)">
+      <circle cx="260" cy="175" r="10" fill="url(#bn-cyanNode)"/>
+      <circle cx="200" cy="185" r="9" fill="url(#bn-cyanNode)"/>
+      <circle cx="185" cy="230" r="9" fill="url(#bn-cyanNode)"/>
+      <circle cx="180" cy="290" r="9" fill="url(#bn-cyanNode)"/>
+      <circle cx="195" cy="330" r="9" fill="url(#bn-cyanNode)"/>
+      <circle cx="290" cy="340" r="10" fill="url(#bn-cyanNode)"/>
+      <circle cx="330" cy="200" r="9" fill="url(#bn-cyanNode)"/>
+      <circle cx="350" cy="260" r="9" fill="url(#bn-cyanNode)"/>
+      <circle cx="340" cy="320" r="9" fill="url(#bn-cyanNode)"/>
+    </g>
+    <!-- Central hub -->
+    <circle cx="275" cy="260" r="18" fill="url(#bn-purpleNode)" filter="url(#bn-nodeGlow)"/>
+    <circle cx="275" cy="260" r="11" fill="none" stroke="#00e5ff" stroke-width="2" opacity="0.8"/>
+    <circle cx="275" cy="260" r="6" fill="#00e5ff" opacity="0.9"/>
+    <!-- Node highlights -->
+    <g fill="#f0f0f5" opacity="0.8">
+      <circle cx="310" cy="105" r="3.5"/>
+      <circle cx="185" cy="110" r="3"/>
+      <circle cx="105" cy="210" r="3.5"/>
+      <circle cx="100" cy="300" r="3.5"/>
+      <circle cx="180" cy="405" r="3"/>
+      <circle cx="315" cy="410" r="3.5"/>
+    </g>
+  </g>
+
+  <!-- Title text -->
+  <text x="640" y="370" text-anchor="middle" font-family="'Inter', 'Segoe UI', -apple-system, sans-serif" font-weight="800" font-size="80" letter-spacing="12" fill="url(#bn-titleGrad)" filter="url(#textGlow)">CORTIVEX</text>
+
+  <!-- Tagline -->
+  <text x="640" y="420" text-anchor="middle" font-family="'Inter', 'Segoe UI', -apple-system, sans-serif" font-weight="400" font-size="22" letter-spacing="4" fill="#6b7280">Build, Run &amp; Evolve AI Agent Pipelines</text>
+
+  <!-- Subtle separator line -->
+  <line x1="480" y1="440" x2="800" y2="440" stroke="#00e5ff" stroke-width="1" opacity="0.2"/>
+
+  <!-- Sub-features -->
+  <g font-family="'Inter', 'Segoe UI', -apple-system, sans-serif" font-weight="300" font-size="14" letter-spacing="2" fill="#4b5563" text-anchor="middle">
+    <text x="440" y="480">SELF-LEARNING</text>
+    <circle cx="540" cy="476" r="2" fill="#00e5ff" opacity="0.4"/>
+    <text x="640" y="480">MESH COORDINATION</text>
+    <circle cx="750" cy="476" r="2" fill="#7c3aed" opacity="0.4"/>
+    <text x="860" y="480">VISUAL BUILDER</text>
+  </g>
+
+  <!-- Bottom decorative line -->
+  <line x1="0" y1="620" x2="1280" y2="620" stroke="url(#bn-cyanFlow)" stroke-width="2" opacity="0.15"/>
+</svg>

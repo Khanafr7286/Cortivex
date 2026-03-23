@@ -1,0 +1,480 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================
+   CORTIVEX — PROFESSIONAL DARK DESIGN SYSTEM
+   Inspired by SWARM's void/surface palette
+   ============================================ */
+
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(79, 142, 247, 0.25) rgba(5, 5, 8, 0.5);
+  }
+
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: rgba(5, 5, 8, 0.5);
+    border-radius: 3px;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: rgba(79, 142, 247, 0.25);
+    border-radius: 3px;
+    transition: background 0.2s;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: rgba(79, 142, 247, 0.45);
+  }
+
+  ::selection {
+    background: rgba(123, 110, 246, 0.4);
+    color: #CDD5E0;
+  }
+
+  ::-moz-selection {
+    background: rgba(123, 110, 246, 0.4);
+    color: #CDD5E0;
+  }
+
+  html {
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  body {
+    overflow: hidden;
+    background: #050508;
+  }
+}
+
+/* ============================================
+   BACKGROUND — SWARM-STYLE VOID WITH DOT GRID
+   ============================================ */
+
+@layer components {
+  .mesh-background {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    background: radial-gradient(
+      ellipse at 50% 40%,
+      rgba(11, 13, 20, 1) 0%,
+      rgba(5, 5, 8, 1) 70%
+    );
+  }
+
+  .mesh-background::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse at 20% 50%, rgba(79, 142, 247, 0.015) 0%, transparent 50%),
+      radial-gradient(ellipse at 80% 20%, rgba(123, 110, 246, 0.012) 0%, transparent 50%),
+      radial-gradient(ellipse at 50% 80%, rgba(61, 214, 140, 0.008) 0%, transparent 50%);
+  }
+
+  /* Dot grid overlay — same as SWARM */
+  .mesh-grid {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    background-image: radial-gradient(circle, rgba(79, 142, 247, 0.015) 1px, transparent 1px);
+    background-size: 60px 60px;
+    mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+    -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+  }
+
+  /* ============================================
+     N8N DOT GRID
+     ============================================ */
+
+  .dot-grid {
+    background-image: radial-gradient(circle, rgba(90, 100, 120, 0.12) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+
+  /* ============================================
+     GLASSMORPHISM — SWARM STYLE
+     ============================================ */
+
+  .glass {
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    background: rgba(5, 5, 8, 0.7);
+    border: 1px solid rgba(26, 31, 46, 0.6);
+  }
+
+  .glass-subtle {
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    background: rgba(11, 13, 20, 0.6);
+    border: 1px solid rgba(26, 31, 46, 0.4);
+  }
+
+  .glass-card {
+    background: #12151E;
+    border: 1px solid #1A1F2E;
+    transition: all 0.2s ease;
+  }
+
+  .glass-card:hover {
+    border-color: rgba(79, 142, 247, 0.2);
+    background: #161A24;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(79, 142, 247, 0.1);
+  }
+
+  /* ============================================
+     PANEL — SWARM STYLE
+     ============================================ */
+
+  .panel {
+    background: #12151E;
+    border-radius: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.4), 0 8px 24px rgba(0,0,0,0.2);
+  }
+
+  .panel:hover {
+    box-shadow: 0 1px 3px rgba(0,0,0,0.4), 0 8px 24px rgba(0,0,0,0.2), 0 0 0 1px rgba(79, 142, 247, 0.1);
+  }
+
+  /* ============================================
+     GLOW EFFECTS
+     ============================================ */
+
+  .glow-cyan {
+    box-shadow:
+      0 0 12px rgba(79, 142, 247, 0.3),
+      0 0 40px rgba(79, 142, 247, 0.1);
+  }
+
+  .glow-purple {
+    box-shadow:
+      0 0 12px rgba(123, 110, 246, 0.3),
+      0 0 40px rgba(123, 110, 246, 0.1);
+  }
+
+  .glow-green {
+    box-shadow:
+      0 0 12px rgba(61, 214, 140, 0.3),
+      0 0 40px rgba(61, 214, 140, 0.1);
+  }
+
+  .glow-coral {
+    box-shadow:
+      0 0 12px rgba(224, 92, 92, 0.3),
+      0 0 40px rgba(224, 92, 92, 0.1);
+  }
+
+  .text-glow-cyan {
+    text-shadow: 0 0 20px rgba(79, 142, 247, 0.5);
+  }
+
+  /* ============================================
+     NODE PULSE (ACTIVE EXECUTION)
+     ============================================ */
+
+  .node-pulse {
+    animation: nodePulse 2s ease-in-out infinite;
+  }
+
+  @keyframes nodePulse {
+    0%, 100% {
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+      border-color: rgba(79, 142, 247, 0.3);
+    }
+    50% {
+      box-shadow: 0 4px 16px rgba(79, 142, 247, 0.15);
+      border-color: rgba(79, 142, 247, 0.5);
+    }
+  }
+
+  /* ============================================
+     CONNECTION FLOW ANIMATION
+     ============================================ */
+
+  .connection-flow {
+    stroke-dasharray: 8 4;
+    animation: connectionFlow 1s linear infinite;
+  }
+
+  @keyframes connectionFlow {
+    0% {
+      stroke-dashoffset: 12;
+    }
+    100% {
+      stroke-dashoffset: 0;
+    }
+  }
+
+  .connection-flow-fast {
+    stroke-dasharray: 6 3;
+    animation: connectionFlow 0.5s linear infinite;
+  }
+
+  /* n8n-style executing connection — animated dash offset */
+  .n8n-connection-executing {
+    animation: n8nConnectionFlow 0.8s linear infinite;
+  }
+
+  @keyframes n8nConnectionFlow {
+    0% {
+      stroke-dashoffset: 10;
+    }
+    100% {
+      stroke-dashoffset: 0;
+    }
+  }
+
+  /* ============================================
+     PARTICLE GLOW
+     ============================================ */
+
+  .particle {
+    border-radius: 50%;
+    filter: blur(1px);
+    box-shadow:
+      0 0 6px currentColor,
+      0 0 12px currentColor;
+  }
+
+  /* ============================================
+     TERMINAL STYLES
+     ============================================ */
+
+  .terminal {
+    font-family: 'Space Mono', 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    letter-spacing: 0.02em;
+  }
+
+  .terminal-line {
+    padding: 1px 0;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
+  .terminal-line.stdout {
+    color: #CDD5E0;
+  }
+
+  .terminal-line.stderr {
+    color: #E05C5C;
+  }
+
+  .terminal-line.progress {
+    color: #4F8EF7;
+  }
+
+  .terminal-line.cost {
+    color: #E8A44A;
+  }
+
+  .terminal-line.system {
+    color: #5A6478;
+    font-style: italic;
+  }
+
+  /* ============================================
+     BUTTONS — SWARM STYLE
+     ============================================ */
+
+  .btn-primary {
+    @apply relative overflow-hidden rounded-lg px-6 py-2.5 font-medium text-sm;
+    background: linear-gradient(135deg, rgba(79, 142, 247, 0.15) 0%, rgba(79, 142, 247, 0.05) 100%);
+    border: 1px solid rgba(79, 142, 247, 0.3);
+    color: #4F8EF7;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .btn-primary:hover {
+    background: linear-gradient(135deg, rgba(79, 142, 247, 0.25) 0%, rgba(79, 142, 247, 0.1) 100%);
+    border-color: rgba(79, 142, 247, 0.5);
+    box-shadow: 0 0 20px rgba(79, 142, 247, 0.2);
+  }
+
+  .btn-primary:active {
+    transform: scale(0.98);
+  }
+
+  .btn-danger {
+    @apply relative overflow-hidden rounded-lg px-4 py-2 font-medium text-sm;
+    background: linear-gradient(135deg, rgba(224, 92, 92, 0.15) 0%, rgba(224, 92, 92, 0.05) 100%);
+    border: 1px solid rgba(224, 92, 92, 0.3);
+    color: #E05C5C;
+    transition: all 0.3s;
+  }
+
+  .btn-danger:hover {
+    background: linear-gradient(135deg, rgba(224, 92, 92, 0.25) 0%, rgba(224, 92, 92, 0.1) 100%);
+    border-color: rgba(224, 92, 92, 0.5);
+    box-shadow: 0 0 20px rgba(224, 92, 92, 0.2);
+  }
+
+  .btn-ghost {
+    @apply rounded-lg px-4 py-2 font-medium text-sm;
+    color: #5A6478;
+    transition: all 0.2s;
+    border: 1px solid transparent;
+  }
+
+  .btn-ghost:hover {
+    color: #CDD5E0;
+    background: rgba(26, 31, 46, 0.5);
+    border-color: rgba(26, 31, 46, 0.8);
+  }
+
+  /* ============================================
+     PORT STYLES
+     ============================================ */
+
+  .port {
+    @apply w-3 h-3 rounded-full border-2 transition-all duration-200;
+    border-color: rgba(79, 142, 247, 0.4);
+    background: rgba(5, 5, 8, 0.9);
+  }
+
+  .port:hover {
+    border-color: rgba(79, 142, 247, 0.8);
+    box-shadow: 0 0 10px rgba(79, 142, 247, 0.4);
+    transform: scale(1.3);
+  }
+
+  .port.connected {
+    background: rgba(79, 142, 247, 0.3);
+    border-color: rgba(79, 142, 247, 0.6);
+  }
+
+  /* n8n-style small circular ports */
+  .n8n-port {
+    @apply w-2 h-2 rounded-full transition-all duration-200;
+    background: #12151E;
+    border: 1.5px solid #353D4F;
+  }
+
+  .n8n-port:hover {
+    background: rgba(79, 142, 247, 0.4);
+    border-color: rgba(79, 142, 247, 0.7);
+    box-shadow: 0 0 6px rgba(79, 142, 247, 0.3);
+    transform: scale(1.4);
+  }
+
+  /* ============================================
+     BADGE STYLES
+     ============================================ */
+
+  .badge {
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium;
+  }
+
+  .badge-cyan {
+    @apply badge;
+    background: rgba(79, 142, 247, 0.1);
+    color: #4F8EF7;
+    border: 1px solid rgba(79, 142, 247, 0.2);
+  }
+
+  .badge-purple {
+    @apply badge;
+    background: rgba(123, 110, 246, 0.1);
+    color: #7B6EF6;
+    border: 1px solid rgba(123, 110, 246, 0.2);
+  }
+
+  .badge-green {
+    @apply badge;
+    background: rgba(61, 214, 140, 0.1);
+    color: #3DD68C;
+    border: 1px solid rgba(61, 214, 140, 0.2);
+  }
+
+  .badge-coral {
+    @apply badge;
+    background: rgba(224, 92, 92, 0.1);
+    color: #E05C5C;
+    border: 1px solid rgba(224, 92, 92, 0.2);
+  }
+
+  .badge-amber {
+    @apply badge;
+    background: rgba(232, 164, 74, 0.1);
+    color: #E8A44A;
+    border: 1px solid rgba(232, 164, 74, 0.2);
+  }
+
+  /* ============================================
+     TOOLTIP
+     ============================================ */
+
+  .tooltip {
+    @apply invisible absolute z-50 rounded-lg px-3 py-1.5 text-xs font-medium opacity-0 transition-all duration-200;
+    background: rgba(11, 13, 20, 0.95);
+    border: 1px solid rgba(26, 31, 46, 0.8);
+    color: #CDD5E0;
+    backdrop-filter: blur(8px);
+    white-space: nowrap;
+    pointer-events: none;
+  }
+
+  .tooltip-trigger:hover .tooltip {
+    @apply visible opacity-100;
+    transform: translateY(-4px);
+  }
+
+  /* ============================================
+     PROGRESS RING
+     ============================================ */
+
+  .progress-ring {
+    transform: rotate(-90deg);
+    transform-origin: 50% 50%;
+  }
+
+  .progress-ring-circle {
+    transition: stroke-dashoffset 0.35s ease;
+    stroke-linecap: round;
+  }
+
+  /* ============================================
+     CATEGORY COLORS
+     ============================================ */
+
+  .category-quality { --category-color: #4F8EF7; }
+  .category-security { --category-color: #E05C5C; }
+  .category-testing { --category-color: #3DD68C; }
+  .category-devops { --category-color: #E8A44A; }
+  .category-docs { --category-color: #7B6EF6; }
+  .category-refactoring { --category-color: #22d3ee; }
+  .category-analysis { --category-color: #7B6EF6; }
+}
+
+/* ============================================
+   UTILITY LAYER
+   ============================================ */
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .no-drag {
+    -webkit-user-drag: none;
+    user-select: none;
+  }
+
+  .drag-handle {
+    cursor: grab;
+  }
+
+  .drag-handle:active {
+    cursor: grabbing;
+  }
+}

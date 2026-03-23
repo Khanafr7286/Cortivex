@@ -1,0 +1,118 @@
+# =============================================================================
+# Cortivex Pipeline Template: Onboarding Guide
+# =============================================================================
+# Generates comprehensive onboarding documentation for new developers:
+#   1. Analyzes codebase architecture, patterns, and structure
+#   2. Creates human-readable explanations of each module and key decisions
+#   3. Writes onboarding docs: getting started, architecture overview, guides
+#
+# Usage:
+#   /cortivex run onboarding-guide
+#   /cortivex run onboarding-guide --param audience=junior
+#   /cortivex run onboarding-guide --param target_path=src/
+# =============================================================================
+
+name: onboarding-guide
+version: "1.0"
+description: Analyze codebase and generate comprehensive onboarding documentation for new developers
+tags: [onboarding, documentation, architecture, developer-experience]
+estimated_cost: "$0.05"
+estimated_duration: "4m"
+
+params:
+  target_path:
+    type: string
+    default: ./
+    description: Root directory to analyze and document
+  audience:
+    type: string
+    default: junior
+    description: "Target audience: junior, mid, senior, non-technical"
+  include_diagrams:
+    type: boolean
+    default: true
+    description: Include mermaid architecture and flow diagrams
+
+nodes:
+  # ---------------------------------------------------------------------------
+  # Node 1: ArchitectAnalyzer
+  # Deep analysis of the codebase to understand:
+  #   - Project structure and module organization
+  #   - Dependency graph between modules
+  #   - Design patterns and conventions in use
+  #   - Entry points and main workflows
+  #   - Technology stack and framework usage
+  # This context drives the downstream explanation and documentation.
+  # ---------------------------------------------------------------------------
+  - id: architect
+    type: ArchitectAnalyzer
+    depends_on: []
+    config:
+      model: claude-sonnet-4-20250514
+      target_path: "${params.target_path}"
+      analyze_dependencies: true
+      detect_patterns: true
+      detect_antipatterns: true
+      map_entry_points: true
+      include_metrics: true
+      ignore_paths:
+        - node_modules/
+        - vendor/
+        - dist/
+        - build/
+        - .git/
+        - coverage/
+        - "*.test.*"
+        - "*.spec.*"
+
+  # ---------------------------------------------------------------------------
+  # Node 2: CodeExplainer
+  # Creates developer-friendly explanations of the codebase:
+  #   - Module-by-module purpose and responsibility summaries
+  #   - Data flow explanations (how a request flows through the system)
+  #   - Key design decisions and their rationale
+  #   - Common patterns used and how to follow them
+  #   - Important abstractions and their usage
+  # Adapts tone and complexity to the target audience.
+  # ---------------------------------------------------------------------------
+  - id: explainer
+    type: CodeExplainer
+    depends_on: [architect]
+    config:
+      model: claude-sonnet-4-20250514
+      explain_scope: full
+      target_path: "${params.target_path}"
+      audience: "${params.audience}"
+      include_diagrams: "${params.include_diagrams}"
+      include_examples: true
+      explain_why: true
+      link_to_source: true
+      output_format: markdown
+      max_depth: 3
+
+  # ---------------------------------------------------------------------------
+  # Node 3: DocWriter
+  # Assembles the onboarding documentation package:
+  #   - Getting Started guide (setup, first run, dev workflow)
+  #   - Architecture overview with module map
+  #   - API reference for internal interfaces
+  #   - Coding conventions and style guide
+  #   - Common tasks cookbook (how to add a feature, fix a bug, etc.)
+  # ---------------------------------------------------------------------------
+  - id: doc_write
+    type: DocWriter
+    depends_on: [explainer]
+    config:
+      model: claude-sonnet-4-20250514
+      doc_types:
+        - readme
+        - architecture
+        - setup-guide
+        - api
+      target_path: "${params.target_path}"
+      output_format: markdown
+      include_examples: true
+      include_diagrams: "${params.include_diagrams}"
+      update_mode: merge
+      toc_generation: true
+      link_validation: true

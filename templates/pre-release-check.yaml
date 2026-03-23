@@ -1,0 +1,136 @@
+# =============================================================================
+# Cortivex Pipeline Template: Pre-Release Check
+# =============================================================================
+# Full validation pipeline before a release:
+#   1. Security scan to catch any lingering vulnerabilities
+#   2. Complete test suite run with strict coverage requirements
+#   3. Performance profiling to catch regressions
+#   4. Changelog generation for the release
+#
+# Usage:
+#   /cortivex run pre-release-check
+#   /cortivex run pre-release-check --param version=2.1.0
+#   /cortivex run pre-release-check --param coverage_threshold=90
+# =============================================================================
+
+name: pre-release-check
+version: "1.0"
+description: Pre-release validation with security scan, full test run, performance profiling, and changelog generation
+tags: [release, validation, security, testing, performance, changelog]
+estimated_cost: "$0.06"
+estimated_duration: "6m"
+
+params:
+  version:
+    type: string
+    default: null
+    description: Release version (used in changelog header; auto-detected from package.json if null)
+  coverage_threshold:
+    type: number
+    default: 85
+    description: Minimum test coverage percentage to pass for release
+  performance_check:
+    type: boolean
+    default: true
+    description: Whether to run performance profiling
+
+nodes:
+  # ---------------------------------------------------------------------------
+  # Node 1: SecurityScanner
+  # Final security gate before release. Uses deep scan mode to catch
+  # anything that may have slipped through during development.
+  # Checks all dependencies against the latest CVE database.
+  # Runs in parallel with TestRunner since they are independent.
+  # ---------------------------------------------------------------------------
+  - id: security_scan
+    type: SecurityScanner
+    depends_on: []
+    config:
+      model: claude-sonnet-4-20250514
+      scan_depth: deep
+      check_dependencies: true
+      check_secrets: true
+      check_patterns: true
+      severity_threshold: low
+      ignore_paths:
+        - node_modules/
+        - vendor/
+        - dist/
+      cve_database: latest
+      max_files: 2000
+      output_format: structured
+
+  # ---------------------------------------------------------------------------
+  # Node 2: TestRunner
+  # Runs the complete test suite with strict coverage requirements.
+  # For releases, coverage threshold is higher than normal development.
+  # Tests must all pass; no flaky test retries allowed for release builds.
+  # Runs in parallel with SecurityScanner.
+  # ---------------------------------------------------------------------------
+  - id: test_run
+    type: TestRunner
+    depends_on: []
+    config:
+      model: claude-haiku-4-20250414
+      test_command: auto
+      coverage_enabled: true
+      coverage_threshold: "${params.coverage_threshold}"
+      coverage_report: lcov
+      timeout_seconds: 600
+      fail_fast: false
+      parallel: true
+      retry_flaky: 0
+      output_verbose: true
+
+  # ---------------------------------------------------------------------------
+  # Node 3: PerformanceProfiler
+  # Profiles the codebase for performance regressions before release.
+  # Focuses on hot paths and API endpoints that users interact with.
+  # Compares against baseline metrics where available.
+  # Only runs if performance_check is true.
+  # ---------------------------------------------------------------------------
+  - id: perf_profile
+    type: PerformanceProfiler
+    depends_on: [test_run]
+    condition:
+      if: "${params.performance_check} == true"
+      skip_message: "Performance profiling disabled via performance_check=false"
+    config:
+      model: claude-sonnet-4-20250514
+      profile_scope: hot_paths
+      check_categories:
+        - algorithm-complexity
+        - memory-allocation
+        - database-queries
+        - network-calls
+        - caching-opportunities
+        - bundle-size
+      include_benchmarks: true
+      complexity_analysis: true
+
+  # ---------------------------------------------------------------------------
+  # Node 4: ChangelogWriter
+  # Generates release changelog from git history since the last tag.
+  # Includes all categorized changes, authors, and PR links.
+  # Waits for security and test results to include their status
+  # in the release notes.
+  # ---------------------------------------------------------------------------
+  - id: changelog
+    type: ChangelogWriter
+    depends_on: [security_scan, perf_profile]
+    config:
+      model: claude-haiku-4-20250414
+      format: keep-a-changelog
+      source: both
+      since: last-tag
+      categories:
+        - Added
+        - Changed
+        - Deprecated
+        - Removed
+        - Fixed
+        - Security
+      include_authors: true
+      include_pr_links: true
+      output_file: CHANGELOG.md
+      prepend: true

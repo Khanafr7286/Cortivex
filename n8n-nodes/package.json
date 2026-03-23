@@ -1,0 +1,42 @@
+{
+  "name": "n8n-nodes-cortivex",
+  "version": "1.0.0",
+  "description": "n8n community nodes for Cortivex AI agent pipeline orchestration",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "nodes": [
+      "dist/nodes/CortivexRun/CortivexRun.node.js",
+      "dist/nodes/CortivexStatus/CortivexStatus.node.js",
+      "dist/nodes/CortivexInsights/CortivexInsights.node.js",
+      "dist/nodes/CortivexMesh/CortivexMesh.node.js"
+    ],
+    "credentials": [
+      "dist/credentials/CortivexApi.credentials.js"
+    ]
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "n8n-workflow": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "n8n-core": "*"
+  },
+  "keywords": [
+    "n8n-community-node-package",
+    "n8n",
+    "cortivex",
+    "ai",
+    "agents",
+    "pipeline"
+  ],
+  "files": [
+    "dist"
+  ]
+}

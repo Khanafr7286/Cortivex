@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#1f6feb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Shield -->
+  <path d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.25C17.25 22.15 21 17.25 21 12V7L12 2z"/>
+  <!-- Scan lines inside shield -->
+  <line x1="7" y1="10" x2="17" y2="10" opacity="0.7"/>
+  <line x1="8" y1="13" x2="16" y2="13" opacity="0.5"/>
+  <line x1="9" y1="16" x2="15" y2="16" opacity="0.3"/>
+</svg>

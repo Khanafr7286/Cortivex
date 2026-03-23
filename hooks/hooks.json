@@ -1,0 +1,32 @@
+{
+  "hooks": [
+    {
+      "event": "UserPromptSubmit",
+      "command": "node packages/cli/dist/hooks/route.js",
+      "description": "Route tasks to appropriate Cortivex pipeline nodes based on intent detection",
+      "matcher": "(pipeline|review|scan|test|fix|deploy|audit|refactor|document|security|lint|analyze)"
+    },
+    {
+      "event": "PreToolUse",
+      "command": "node packages/cli/dist/hooks/pre-edit.js",
+      "description": "Check mesh claims before file edits -- prevents conflicts between concurrent agents",
+      "matcher": "Edit|Write"
+    },
+    {
+      "event": "PostToolUse",
+      "command": "node packages/cli/dist/hooks/post-edit.js",
+      "description": "Record file modifications to mesh and knowledge graph after edits",
+      "matcher": "Edit|Write"
+    },
+    {
+      "event": "SessionStart",
+      "command": "node packages/cli/dist/hooks/session-start.js",
+      "description": "Initialize Cortivex session -- load pipeline history, check mesh state, start learning engine"
+    },
+    {
+      "event": "Stop",
+      "command": "node packages/cli/dist/hooks/session-end.js",
+      "description": "Record session metrics, persist learning data, release mesh claims"
+    }
+  ]
+}

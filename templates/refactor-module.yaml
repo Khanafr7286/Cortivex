@@ -1,0 +1,149 @@
+# =============================================================================
+# Cortivex Pipeline Template: Refactor Module
+# =============================================================================
+# Safely refactors a module while preserving behavior:
+#   1. Analyzes the module's architecture, dependencies, and public API
+#   2. Performs structural refactoring (extract, rename, simplify)
+#   3. Runs tests to validate behavior is preserved
+#   4. Reviews the refactored code for quality
+#
+# Usage:
+#   /cortivex run refactor-module
+#   /cortivex run refactor-module --param target_path=src/services/auth/
+#   /cortivex run refactor-module --param preserve_public_api=false
+# =============================================================================
+
+name: refactor-module
+version: "1.0"
+description: Analyze a module, refactor for improved structure and readability, test, and review
+tags: [refactor, architecture, code-quality, restructure, cleanup]
+estimated_cost: "$0.08"
+estimated_duration: "6m"
+
+params:
+  target_path:
+    type: string
+    default: null
+    description: Module or directory to refactor (required)
+  preserve_public_api:
+    type: boolean
+    default: true
+    description: Whether to keep exported interfaces unchanged
+  refactor_operations:
+    type: array
+    default:
+      - extract-function
+      - extract-class
+      - simplify-conditional
+      - inline-function
+    description: Which refactoring operations to consider
+  max_changes_per_file:
+    type: number
+    default: 10
+    description: Maximum refactoring changes per file to keep diffs reviewable
+
+nodes:
+  # ---------------------------------------------------------------------------
+  # Node 1: ArchitectAnalyzer
+  # Analyzes the target module to understand:
+  #   - Internal structure and class/function relationships
+  #   - External dependencies (what imports this module)
+  #   - Public API surface (exports that must be preserved)
+  #   - Complexity hotspots that need refactoring most
+  #   - Existing test coverage (what's safe to refactor)
+  # This context ensures the refactor is safe and targeted.
+  # ---------------------------------------------------------------------------
+  - id: architect
+    type: ArchitectAnalyzer
+    depends_on: []
+    config:
+      model: claude-sonnet-4-20250514
+      target_path: "${params.target_path}"
+      analyze_dependencies: true
+      detect_patterns: true
+      detect_antipatterns: true
+      map_entry_points: true
+      include_metrics: true
+      ignore_paths:
+        - node_modules/
+        - vendor/
+        - dist/
+
+  # ---------------------------------------------------------------------------
+  # Node 2: RefactorAgent
+  # Performs the actual refactoring operations:
+  #   - Extract long functions into smaller, focused functions
+  #   - Extract cohesive groups of methods into classes/modules
+  #   - Rename symbols for consistency and clarity
+  #   - Simplify complex conditionals (guard clauses, early returns)
+  #   - Inline trivial wrapper functions
+  #   - Move misplaced code to correct modules
+  # Respects public API preservation setting.
+  # Updates test imports/references automatically.
+  # ---------------------------------------------------------------------------
+  - id: refactor
+    type: RefactorAgent
+    depends_on: [architect]
+    config:
+      model: claude-sonnet-4-20250514
+      refactor_scope: targeted
+      target_path: "${params.target_path}"
+      operations: "${params.refactor_operations}"
+      preserve_public_api: "${params.preserve_public_api}"
+      max_changes_per_file: "${params.max_changes_per_file}"
+      include_tests: true
+      dry_run: false
+
+  # ---------------------------------------------------------------------------
+  # Node 3: TestRunner
+  # Runs the test suite after refactoring to validate that:
+  #   - All existing tests still pass (behavior preserved)
+  #   - No new TypeScript/compilation errors
+  #   - Coverage has not decreased
+  # This is the critical safety net for the refactor.
+  # ---------------------------------------------------------------------------
+  - id: test_run
+    type: TestRunner
+    depends_on: [refactor]
+    config:
+      model: claude-haiku-4-20250414
+      test_command: auto
+      coverage_enabled: true
+      coverage_threshold: 0
+      timeout_seconds: 300
+      fail_fast: false
+      parallel: true
+      retry_flaky: 1
+      output_verbose: true
+    retry:
+      max_attempts: 2
+      backoff: fixed
+      base_delay_seconds: 5
+      retry_on: [timeout, transient_error]
+
+  # ---------------------------------------------------------------------------
+  # Node 4: CodeReviewer
+  # Reviews the refactored code to validate quality improvements:
+  #   - Complexity reduction (should be lower than before)
+  #   - Naming consistency
+  #   - Proper separation of concerns
+  #   - No introduced anti-patterns
+  # Provides a final quality assessment of the refactoring.
+  # ---------------------------------------------------------------------------
+  - id: code_review
+    type: CodeReviewer
+    depends_on: [test_run]
+    config:
+      model: claude-sonnet-4-20250514
+      review_scope: changed_files
+      check_patterns:
+        - complexity
+        - naming-conventions
+        - dry-violations
+        - dead-code
+        - error-handling
+        - type-safety
+      max_issues: 30
+      severity_levels: true
+      suggest_fixes: true
+      complexity_threshold: 10

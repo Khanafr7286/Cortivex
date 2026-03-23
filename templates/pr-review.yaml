@@ -1,0 +1,160 @@
+# =============================================================================
+# Cortivex Pipeline Template: PR Review
+# =============================================================================
+# Performs a comprehensive pull request review:
+#   1. Scans for security vulnerabilities in changed files
+#   2. Reviews code quality, patterns, and best practices
+#   3. Auto-fixes identified issues (style, bugs, performance)
+#   4. Runs the test suite to validate all fixes
+#   5. Updates the PR with a summary of changes and review results
+#
+# Usage:
+#   /cortivex run pr-review
+#   /cortivex run pr-review --param pr_number=42
+#   /cortivex run pr-review --param branch=feature/auth --verbose
+# =============================================================================
+
+name: pr-review
+version: "1.0"
+description: Review a pull request for security issues, code quality, auto-fix problems, run tests, and update the PR
+tags: [pr, review, security, quality, auto-fix]
+estimated_cost: "$0.05"
+estimated_duration: "3m"
+
+params:
+  pr_number:
+    type: number
+    default: null
+    description: Pull request number to review (auto-detected from current branch if not specified)
+  branch:
+    type: string
+    default: null
+    description: Branch name to review (auto-detected if not specified)
+  fix_mode:
+    type: string
+    default: minimal
+    description: "How aggressively to auto-fix: minimal, comprehensive"
+  coverage_threshold:
+    type: number
+    default: 80
+    description: Minimum test coverage percentage to pass
+
+nodes:
+  # ---------------------------------------------------------------------------
+  # Node 1: SecurityScanner
+  # Scans changed files for security vulnerabilities, hardcoded secrets,
+  # insecure patterns, and known CVEs in dependencies.
+  # Runs first with no dependencies so it starts immediately.
+  # ---------------------------------------------------------------------------
+  - id: security_scan
+    type: SecurityScanner
+    depends_on: []
+    config:
+      model: claude-sonnet-4-20250514
+      scan_depth: standard
+      check_dependencies: true
+      check_secrets: true
+      check_patterns: true
+      severity_threshold: medium
+      ignore_paths:
+        - node_modules/
+        - vendor/
+        - dist/
+        - "*.test.*"
+        - "*.spec.*"
+      max_files: 200
+      output_format: structured
+
+  # ---------------------------------------------------------------------------
+  # Node 2: CodeReviewer
+  # Reviews changed files for code quality, naming, complexity, error handling,
+  # and adherence to best practices. Runs after security scan so it can
+  # incorporate security context into its review.
+  # ---------------------------------------------------------------------------
+  - id: code_review
+    type: CodeReviewer
+    depends_on: [security_scan]
+    config:
+      model: claude-sonnet-4-20250514
+      review_scope: changed_files
+      check_patterns:
+        - error-handling
+        - naming-conventions
+        - complexity
+        - dry-violations
+        - dead-code
+        - type-safety
+        - edge-cases
+      max_issues: 50
+      severity_levels: true
+      suggest_fixes: true
+      complexity_threshold: 15
+
+  # ---------------------------------------------------------------------------
+  # Node 3: AutoFixer
+  # Automatically fixes issues found by SecurityScanner and CodeReviewer.
+  # Creates minimal, clean diffs. Backs up originals before modifying.
+  # ---------------------------------------------------------------------------
+  - id: auto_fix
+    type: AutoFixer
+    depends_on: [code_review]
+    config:
+      model: claude-sonnet-4-20250514
+      fix_categories:
+        - style
+        - bugs
+        - performance
+        - security
+      require_confirmation: false
+      create_backup: true
+      max_files: 50
+      fix_mode: "${params.fix_mode}"
+      preserve_formatting: true
+      validate_fixes: true
+
+  # ---------------------------------------------------------------------------
+  # Node 4: TestRunner
+  # Runs the full test suite after auto-fixes to ensure no regressions.
+  # Reports coverage and fail/pass status per test file.
+  # ---------------------------------------------------------------------------
+  - id: test_run
+    type: TestRunner
+    depends_on: [auto_fix]
+    config:
+      model: claude-haiku-4-20250414
+      test_command: auto
+      coverage_enabled: true
+      coverage_threshold: "${params.coverage_threshold}"
+      timeout_seconds: 300
+      fail_fast: false
+      parallel: true
+      retry_flaky: 1
+    retry:
+      max_attempts: 2
+      backoff: fixed
+      base_delay_seconds: 5
+      retry_on: [timeout, transient_error]
+
+  # ---------------------------------------------------------------------------
+  # Node 5: PRCreator
+  # Updates the pull request with a structured summary including:
+  #   - Security scan results
+  #   - Code review findings
+  #   - Auto-fix changes made
+  #   - Test results and coverage
+  # Applies the "cortivex-reviewed" label.
+  # ---------------------------------------------------------------------------
+  - id: pr_update
+    type: PRCreator
+    depends_on: [test_run]
+    config:
+      model: claude-haiku-4-20250414
+      action: update
+      include_summary: true
+      include_checklist: true
+      include_test_results: true
+      labels:
+        - cortivex-reviewed
+      draft: false
+      link_issues: true
+      title_format: conventional

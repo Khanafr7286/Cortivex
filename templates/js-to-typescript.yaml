@@ -1,0 +1,138 @@
+# =============================================================================
+# Cortivex Pipeline Template: JavaScript to TypeScript Migration
+# =============================================================================
+# Migrates JavaScript source files to TypeScript:
+#   1. Analyzes codebase architecture and dependency graph
+#   2. Converts .js/.jsx files to .ts/.tsx with type annotations
+#   3. Runs linters to fix style and TypeScript-specific issues
+#   4. Runs tests to validate the migration did not break anything
+#
+# Usage:
+#   /cortivex run js-to-typescript
+#   /cortivex run js-to-typescript --param source_dir=src/utils/
+#   /cortivex run js-to-typescript --param strict_mode=true
+# =============================================================================
+
+name: js-to-typescript
+version: "1.0"
+description: Migrate JavaScript source files to TypeScript with type annotations, lint fixing, and validation
+tags: [migration, typescript, javascript, types, modernization]
+estimated_cost: "$0.12"
+estimated_duration: "8m"
+
+params:
+  source_dir:
+    type: string
+    default: src/
+    description: Directory containing JavaScript files to migrate
+  strict_mode:
+    type: boolean
+    default: false
+    description: Enable TypeScript strict mode (no implicit any)
+  add_types:
+    type: string
+    default: inferred
+    description: "Type annotation strategy: inferred, explicit, minimal"
+  batch_size:
+    type: number
+    default: 20
+    description: Number of files to migrate per batch (controls cost)
+
+nodes:
+  # ---------------------------------------------------------------------------
+  # Node 1: ArchitectAnalyzer
+  # Analyzes the codebase before migration to understand:
+  #   - Module dependency graph (migration order matters)
+  #   - Shared types and interfaces that should be extracted
+  #   - Entry points and public API surfaces
+  #   - Patterns in use (for correct type inference)
+  # ---------------------------------------------------------------------------
+  - id: analyze
+    type: ArchitectAnalyzer
+    depends_on: []
+    config:
+      model: claude-sonnet-4-20250514
+      target_path: "${params.source_dir}"
+      analyze_dependencies: true
+      detect_patterns: true
+      detect_antipatterns: false
+      map_entry_points: true
+      include_metrics: true
+      ignore_paths:
+        - node_modules/
+        - dist/
+        - build/
+        - "*.d.ts"
+
+  # ---------------------------------------------------------------------------
+  # Node 2: TypeMigrator
+  # Converts JavaScript files to TypeScript:
+  #   - Renames .js -> .ts and .jsx -> .tsx
+  #   - Adds type annotations based on usage analysis and JSDoc
+  #   - Generates interfaces for object shapes
+  #   - Updates import paths
+  #   - Creates/updates tsconfig.json
+  # Uses the dependency graph from ArchitectAnalyzer to migrate in the
+  # correct order (leaf modules first, then dependents).
+  # ---------------------------------------------------------------------------
+  - id: migrate
+    type: TypeMigrator
+    depends_on: [analyze]
+    config:
+      model: claude-sonnet-4-20250514
+      source_dir: "${params.source_dir}"
+      strict_mode: "${params.strict_mode}"
+      add_types: "${params.add_types}"
+      preserve_jsdoc: true
+      generate_interfaces: true
+      handle_imports: true
+      tsconfig_update: true
+      file_extension: .ts
+      batch_size: "${params.batch_size}"
+      skip_patterns:
+        - "*.test.js"
+        - "*.spec.js"
+        - "*.config.js"
+        - "*.config.mjs"
+        - "*.config.cjs"
+
+  # ---------------------------------------------------------------------------
+  # Node 3: LintFixer
+  # Runs ESLint with TypeScript rules to fix any style issues introduced
+  # by the migration. Also runs Prettier for consistent formatting.
+  # ---------------------------------------------------------------------------
+  - id: lint_fix
+    type: LintFixer
+    depends_on: [migrate]
+    config:
+      model: claude-haiku-4-20250414
+      fix_mode: auto
+      config_file: auto
+      typescript_rules: true
+      format_on_save: true
+      ignore_paths:
+        - node_modules/
+        - dist/
+
+  # ---------------------------------------------------------------------------
+  # Node 4: TestRunner
+  # Runs the TypeScript compiler (tsc --noEmit) to verify type correctness,
+  # then runs the test suite to validate no behavioral regressions.
+  # ---------------------------------------------------------------------------
+  - id: test_run
+    type: TestRunner
+    depends_on: [lint_fix]
+    config:
+      model: claude-haiku-4-20250414
+      test_command: "npx tsc --noEmit && npm test"
+      coverage_enabled: true
+      coverage_threshold: 70
+      timeout_seconds: 600
+      fail_fast: false
+      parallel: true
+      retry_flaky: 1
+    retry:
+      max_attempts: 2
+      backoff: fixed
+      base_delay_seconds: 10
+      retry_on: [timeout, compilation_error]

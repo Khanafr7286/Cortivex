@@ -1,0 +1,150 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Glow filter for connections -->
+    <filter id="connectionGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <!-- Glow filter for nodes -->
+    <filter id="nodeGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <!-- Gradient for connections -->
+    <linearGradient id="cyanFlow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00e5ff" stop-opacity="0.4"/>
+      <stop offset="50%" stop-color="#00e5ff" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#22d3ee" stop-opacity="0.4"/>
+    </linearGradient>
+    <!-- Radial gradient for primary nodes -->
+    <radialGradient id="purpleNode" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#a855f7"/>
+      <stop offset="60%" stop-color="#7c3aed"/>
+      <stop offset="100%" stop-color="#5b21b6"/>
+    </radialGradient>
+    <!-- Radial gradient for secondary nodes -->
+    <radialGradient id="cyanNode" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#22d3ee"/>
+      <stop offset="60%" stop-color="#00e5ff"/>
+      <stop offset="100%" stop-color="#0891b2"/>
+    </radialGradient>
+    <!-- Subtle outer ring gradient -->
+    <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7c3aed" stop-opacity="0.3"/>
+      <stop offset="50%" stop-color="#00e5ff" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#7c3aed" stop-opacity="0.3"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background circle (subtle) -->
+  <circle cx="256" cy="256" r="240" fill="none" stroke="url(#ringGrad)" stroke-width="1.5" stroke-dasharray="8,6"/>
+
+  <!-- Inner ring -->
+  <circle cx="256" cy="256" r="200" fill="none" stroke="url(#ringGrad)" stroke-width="0.8" stroke-dasharray="4,8" opacity="0.5"/>
+
+  <!-- === NEURAL MESH CONNECTIONS === -->
+  <!-- The connections form the flowing edges of the neural graph -->
+  <!-- They trace a "C" shape through the node layout -->
+  <g filter="url(#connectionGlow)" stroke="url(#cyanFlow)" stroke-width="2" fill="none" stroke-linecap="round">
+    <!-- Outer C-shape path connections -->
+    <!-- Top arc of C -->
+    <path d="M 310,105 Q 250,80 185,110" opacity="0.9"/>
+    <path d="M 185,110 Q 120,145 105,210" opacity="0.9"/>
+    <!-- Left vertical of C -->
+    <path d="M 105,210 L 100,300" opacity="0.9"/>
+    <!-- Bottom arc of C -->
+    <path d="M 100,300 Q 115,370 180,405" opacity="0.9"/>
+    <path d="M 180,405 Q 245,435 315,410" opacity="0.9"/>
+
+    <!-- Inner mesh connections -->
+    <path d="M 310,105 L 260,175" opacity="0.7"/>
+    <path d="M 185,110 L 200,185" opacity="0.7"/>
+    <path d="M 105,210 L 185,230" opacity="0.7"/>
+    <path d="M 100,300 L 180,290" opacity="0.7"/>
+    <path d="M 180,405 L 195,330" opacity="0.7"/>
+    <path d="M 315,410 L 290,340" opacity="0.7"/>
+
+    <!-- Central neural connections -->
+    <path d="M 260,175 L 200,185" opacity="0.6"/>
+    <path d="M 200,185 L 185,230" opacity="0.6"/>
+    <path d="M 185,230 L 180,290" opacity="0.6"/>
+    <path d="M 180,290 L 195,330" opacity="0.6"/>
+    <path d="M 195,330 L 290,340" opacity="0.6"/>
+    <path d="M 260,175 L 330,200" opacity="0.6"/>
+    <path d="M 330,200 L 350,260" opacity="0.6"/>
+    <path d="M 350,260 L 340,320" opacity="0.6"/>
+    <path d="M 340,320 L 290,340" opacity="0.6"/>
+
+    <!-- Deep mesh cross-connections -->
+    <path d="M 260,175 L 275,260" opacity="0.4"/>
+    <path d="M 200,185 L 275,260" opacity="0.4"/>
+    <path d="M 185,230 L 275,260" opacity="0.4"/>
+    <path d="M 275,260 L 350,260" opacity="0.4"/>
+    <path d="M 275,260 L 290,340" opacity="0.4"/>
+    <path d="M 275,260 L 195,330" opacity="0.4"/>
+    <path d="M 275,260 L 180,290" opacity="0.4"/>
+    <path d="M 330,200 L 310,105" opacity="0.5"/>
+    <path d="M 340,320 L 315,410" opacity="0.5"/>
+
+    <!-- Additional mesh filaments -->
+    <path d="M 200,185 L 180,290" opacity="0.3"/>
+    <path d="M 260,175 L 340,320" opacity="0.3"/>
+    <path d="M 330,200 L 195,330" opacity="0.3"/>
+    <path d="M 185,230 L 290,340" opacity="0.3"/>
+  </g>
+
+  <!-- === VERTICES / NODES === -->
+  <!-- Primary nodes (purple) - form the C shape -->
+  <g filter="url(#nodeGlow)">
+    <!-- Top of C -->
+    <circle cx="310" cy="105" r="12" fill="url(#purpleNode)"/>
+    <circle cx="185" cy="110" r="11" fill="url(#purpleNode)"/>
+    <!-- Left side of C -->
+    <circle cx="105" cy="210" r="13" fill="url(#purpleNode)"/>
+    <circle cx="100" cy="300" r="12" fill="url(#purpleNode)"/>
+    <!-- Bottom of C -->
+    <circle cx="180" cy="405" r="11" fill="url(#purpleNode)"/>
+    <circle cx="315" cy="410" r="12" fill="url(#purpleNode)"/>
+  </g>
+
+  <!-- Secondary nodes (cyan) - inner mesh -->
+  <g filter="url(#nodeGlow)">
+    <circle cx="260" cy="175" r="9" fill="url(#cyanNode)"/>
+    <circle cx="200" cy="185" r="8" fill="url(#cyanNode)"/>
+    <circle cx="185" cy="230" r="8" fill="url(#cyanNode)"/>
+    <circle cx="180" cy="290" r="8" fill="url(#cyanNode)"/>
+    <circle cx="195" cy="330" r="8" fill="url(#cyanNode)"/>
+    <circle cx="290" cy="340" r="9" fill="url(#cyanNode)"/>
+    <circle cx="330" cy="200" r="8" fill="url(#cyanNode)"/>
+    <circle cx="350" cy="260" r="8" fill="url(#cyanNode)"/>
+    <circle cx="340" cy="320" r="8" fill="url(#cyanNode)"/>
+  </g>
+
+  <!-- Central hub node -->
+  <circle cx="275" cy="260" r="16" fill="url(#purpleNode)" filter="url(#nodeGlow)"/>
+  <circle cx="275" cy="260" r="10" fill="none" stroke="#00e5ff" stroke-width="1.5" opacity="0.8"/>
+  <circle cx="275" cy="260" r="5" fill="#00e5ff" opacity="0.9"/>
+
+  <!-- Node highlights (small bright dots at centers of primary nodes) -->
+  <g fill="#f0f0f5" opacity="0.8">
+    <circle cx="310" cy="105" r="3"/>
+    <circle cx="185" cy="110" r="2.5"/>
+    <circle cx="105" cy="210" r="3"/>
+    <circle cx="100" cy="300" r="3"/>
+    <circle cx="180" cy="405" r="2.5"/>
+    <circle cx="315" cy="410" r="3"/>
+  </g>
+
+  <!-- Tiny data-flow dots along connections -->
+  <g fill="#00e5ff" opacity="0.6">
+    <circle cx="248" cy="92" r="2"/>
+    <circle cx="145" cy="130" r="2"/>
+    <circle cx="103" cy="255" r="2"/>
+    <circle cx="140" cy="355" r="2"/>
+    <circle cx="248" cy="420" r="2"/>
+    <circle cx="285" cy="140" r="1.5"/>
+    <circle cx="155" cy="170" r="1.5"/>
+    <circle cx="305" cy="260" r="1.5"/>
+    <circle cx="230" cy="310" r="1.5"/>
+  </g>
+</svg>
