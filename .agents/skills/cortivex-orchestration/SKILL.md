@@ -620,3 +620,293 @@ Cost budget enforcement sets hard and soft spending limits at the pipeline and o
 ```
 
 When the soft limit is reached, the coordinator stops scaling up the agent pool and sends an alert. When the hard limit is reached, no new tasks are dispatched; agents finish their current work and the pipeline enters a `budget_exhausted` state. Use `cortivex status --cost` to inspect real-time spending against configured budgets.
+
+## Security Hardening (OWASP AST10 Aligned)
+
+This section defines security controls for the orchestration layer, mapped to the OWASP Agentic Security Threats (AST) taxonomy. All production deployments MUST apply these controls.
+
+### AST03: Agent Spawning Permission Manifest
+
+Every SwarmCoordinator MUST declare a permission manifest that constrains agent spawning. Without this manifest, the coordinator operates in deny-all mode and refuses to spawn any agents. This prevents unauthorized agent proliferation and unbounded resource consumption (AST03: Excessive Agency).
+
+```yaml
+# orchestration-permissions.yaml — AST03 Permission Manifest
+orchestration_security:
+  ast03_permission_manifest:
+    version: "1.0"
+    enforced: true  # reject any spawn request that violates this manifest
+
+    agent_limits:
+      max_concurrent_agents: 8
+      max_total_spawns_per_run: 25
+      max_respawn_attempts_per_agent: 3
+      spawn_rate_limit_per_minute: 10
+
+    allowed_models:
+      - model_id: "claude-sonnet-4-20250514"
+        max_context_tokens: 200000
+        allowed: true
+      - model_id: "claude-haiku-35-20241022"
+        max_context_tokens: 200000
+        allowed: true
+      - model_id: "*"
+        allowed: false  # deny all unlisted models
+
+    cost_ceiling:
+      per_agent_usd: 1.50
+      per_pipeline_usd: 10.00
+      per_hour_usd: 5.00
+      hard_kill_on_breach: true  # AST03: terminate agent immediately on cost breach
+
+    capability_restrictions:
+      allow_network_access: false
+      allow_file_system_write: true
+      allow_subprocess_exec: false
+      allow_external_api_calls: false
+      allowed_mcp_tools:
+        - "cortivex_mesh"
+        - "cortivex_knowledge"
+        - "cortivex_run"
+        - "cortivex_status"
+      denied_mcp_tools:
+        - "cortivex_admin_*"
+        - "cortivex_config_write"
+```
+
+Validate the manifest at coordinator startup using the MCP tool:
+
+```json
+{
+  "tool": "cortivex_orchestrate_validate",
+  "request": {
+    "action": "validate_permission_manifest",
+    "manifest_path": "orchestration-permissions.yaml",
+    "ast_risk_id": "AST03",
+    "fail_on_violation": true
+  }
+}
+```
+
+### AST06: Network Binding Security
+
+Orchestration servers started with `cortivex serve` MUST bind to localhost by default. Remote binding requires explicit authentication configuration. This mitigates AST06 (Insecure Input/Output Handling) by preventing unauthenticated network exposure.
+
+```yaml
+# network-security.yaml — AST06 Network Binding Policy
+network_security:
+  ast06_binding_policy:
+    default_bind_address: "127.0.0.1"  # localhost only
+    allow_remote_bind: false            # must be explicitly overridden
+
+    remote_access:
+      enabled: false
+      require_mtls: true
+      tls_min_version: "1.3"
+      cert_path: "/etc/cortivex/certs/server.pem"
+      key_path: "/etc/cortivex/certs/server-key.pem"
+      ca_path: "/etc/cortivex/certs/ca.pem"
+      allowed_client_cns:
+        - "cortivex-cli.internal"
+        - "cortivex-dashboard.internal"
+
+    api_authentication:
+      method: "bearer_token"
+      token_rotation_hours: 24
+      require_per_request_signature: true
+      replay_protection:
+        enabled: true
+        nonce_window_seconds: 300
+
+    rate_limiting:
+      requests_per_minute: 120
+      burst_size: 20
+      per_client: true
+```
+
+Enforce network binding at server startup:
+
+```json
+{
+  "tool": "cortivex_serve",
+  "request": {
+    "port": 9100,
+    "bind_address": "127.0.0.1",
+    "ast06_network_policy": "network-security.yaml",
+    "reject_remote_without_mtls": true
+  }
+}
+```
+
+### AST09: Agent Lifecycle Audit Logging
+
+Every agent lifecycle event MUST produce a structured, tamper-evident audit log entry. This satisfies AST09 (Insufficient Logging and Monitoring) by ensuring full traceability of agent spawn, kill, scale, cost, and recovery events.
+
+```json
+{
+  "$schema": "https://cortivex.dev/schemas/audit-log-entry/v1.json",
+  "type": "object",
+  "required": ["event_id", "timestamp", "ast_risk_id", "event_type", "actor", "details"],
+  "properties": {
+    "event_id": { "type": "string", "format": "uuid" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "ast_risk_id": { "type": "string", "enum": ["AST09"] },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "agent_spawn", "agent_kill", "agent_rotate", "agent_stall_detected",
+        "agent_death", "agent_recovery", "pool_scale_up", "pool_scale_down",
+        "cost_soft_limit", "cost_hard_limit", "cost_kill_switch",
+        "permission_denied", "manifest_violation", "pipeline_start", "pipeline_end"
+      ]
+    },
+    "actor": {
+      "type": "object",
+      "properties": {
+        "agent_id": { "type": "string" },
+        "role": { "type": "string", "enum": ["coordinator", "monitor", "worker", "system"] },
+        "model_id": { "type": "string" }
+      }
+    },
+    "details": {
+      "type": "object",
+      "properties": {
+        "run_id": { "type": "string" },
+        "reason": { "type": "string" },
+        "cost_usd": { "type": "number" },
+        "tokens_consumed": { "type": "integer" },
+        "pool_size_before": { "type": "integer" },
+        "pool_size_after": { "type": "integer" }
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "properties": {
+        "previous_hash": { "type": "string" },
+        "entry_hash": { "type": "string", "description": "SHA-256 of event_id + timestamp + event_type + details" }
+      }
+    }
+  }
+}
+```
+
+Enable audit logging on the orchestration pipeline:
+
+```yaml
+orchestration:
+  audit:
+    enabled: true
+    ast09_compliance: true
+    log_destination: ".cortivex/audit/orchestration.jsonl"
+    include_events: ["*"]  # log all event types
+    hash_chain: true        # tamper-evident linked hashes
+    retention_days: 90
+    export_on_pipeline_end: true
+```
+
+### Agent Credential Scoping
+
+Each spawned agent MUST receive a uniquely scoped, short-lived API credential. Shared secrets between agents are prohibited. Credential rotation occurs automatically when agents are rotated due to token exhaustion.
+
+```yaml
+credential_scoping:
+  policy: per_agent_unique
+  shared_secrets: deny  # hard prohibition on shared credentials
+
+  api_key_config:
+    generation: automatic
+    scope: agent_instance   # key is valid only for the specific agent instance
+    ttl_seconds: 3600       # 1-hour max lifetime
+    rotate_on_agent_rotation: true
+    rotate_on_recovery: true
+    revoke_on_agent_death: true
+
+  key_permissions:
+    - scope: "cortivex:mesh:*"
+      actions: ["read", "claim", "release"]
+    - scope: "cortivex:knowledge:*"
+      actions: ["read", "add", "query"]
+    - scope: "cortivex:orchestration:self"
+      actions: ["heartbeat", "status"]
+    # Agents cannot manage other agents or modify orchestration config
+    - scope: "cortivex:orchestration:admin"
+      actions: []  # explicitly empty — no admin access for worker agents
+```
+
+Verify credential isolation via MCP:
+
+```json
+{
+  "tool": "cortivex_agent",
+  "request": {
+    "action": "verify_credential_scope",
+    "agent_id": "agent-worker-3",
+    "expected_scope": "agent_instance",
+    "reject_shared": true,
+    "ast_risk_ids": ["AST03", "AST06"]
+  }
+}
+```
+
+### Cost Budget Enforcement with Hard Kill Switches
+
+Cost enforcement operates at three tiers: per-agent, per-pipeline, and per-organization. When a hard limit is breached, the kill switch terminates agents immediately without waiting for task completion. This is the final safety net against runaway cost from AST03 (Excessive Agency).
+
+```typescript
+interface CostKillSwitchConfig {
+  // AST03: Hard ceiling enforcement
+  per_agent: {
+    soft_limit_usd: number;     // alert + restrict new tasks
+    hard_limit_usd: number;     // immediate agent termination
+    kill_delay_seconds: 0;      // 0 = instant kill on hard breach
+  };
+  per_pipeline: {
+    soft_limit_usd: number;
+    hard_limit_usd: number;
+    on_hard_breach: "kill_all_agents" | "drain_and_halt";
+  };
+  per_organization: {
+    daily_limit_usd: number;
+    monthly_limit_usd: number;
+    on_breach: "block_new_pipelines" | "kill_active_pipelines";
+  };
+  monitoring: {
+    check_interval_seconds: number;  // how often cost is recalculated
+    alert_channels: string[];        // where to send budget alerts
+    ast09_audit_cost_events: boolean; // log all cost events per AST09
+  };
+}
+```
+
+```json
+{
+  "tool": "cortivex_orchestrate_cost",
+  "request": {
+    "action": "configure_kill_switch",
+    "run_id": "ctx-a1b2c3",
+    "config": {
+      "per_agent_hard_limit_usd": 1.50,
+      "per_pipeline_hard_limit_usd": 10.00,
+      "kill_delay_seconds": 0,
+      "on_hard_breach": "kill_all_agents",
+      "ast_risk_ids": ["AST03", "AST09"],
+      "audit_all_cost_events": true
+    }
+  }
+}
+```
+
+Response on kill switch activation:
+
+```json
+{
+  "event": "cost_kill_switch_activated",
+  "ast_risk_id": "AST03",
+  "run_id": "ctx-a1b2c3",
+  "trigger": "per_pipeline_hard_limit",
+  "cost_at_trigger_usd": 10.02,
+  "limit_usd": 10.00,
+  "agents_killed": ["agent-worker-1", "agent-worker-2", "agent-worker-3"],
+  "tasks_requeued": 2,
+  "audit_entry_id": "evt-9f8e7d6c",
+  "timestamp": "2026-03-24T14:22:08Z"
+}

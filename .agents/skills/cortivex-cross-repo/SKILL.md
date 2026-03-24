@@ -644,4 +644,158 @@ Aggregate metrics across repositories to surface trends and cross-pollination op
     "anonymized": true
   }
 }
+
+## Security Hardening (OWASP AST10 Aligned)
+
+Security controls for cross-repository intelligence aligned with the OWASP Automated Security Testing Top 10 risk framework.
+
+### AST09: Mandatory Privacy Impact Assessment
+
+No insight crosses a repository boundary without a completed Privacy Impact Assessment. This addresses AST09 (Insufficient Security Validation).
+
+```yaml
+privacy_impact_assessment:
+  # AST09 -- Mandatory PIA before cross-repo sharing
+  enforcement: pre_promotion_gate
+  required_before: [promote, share_with_privacy, promote_batch]
+  assessment_checks:
+    - { id: pii_scan, scanner: regex_and_ner, fail_action: block_promotion }
+    - { id: repo_identity_leak, scanner: fingerprint_reversibility, fail_action: block_promotion }
+    - { id: code_fragment_detection, scanner: ast_pattern_matcher, fail_action: block_promotion }
+    - { id: sensitivity_classification, scanner: data_classifier, fail_action: escalate_to_admin, ast_reference: "AST09" }
+  on_failure: { action: block_and_notify, notify: [privacy-team, security-ops] }
+```
+
+```json
+{
+  "tool": "cortivex_crossrepo",
+  "request": { "action": "promote", "insight_id": "ins-7a3b", "repo": "/path/to/repo" },
+  "response": {
+    "status": "blocked", "reason": "AST09: Privacy Impact Assessment required before promotion",
+    "remediation": "Run cortivex_crossrepo({ action: 'privacy_impact_assessment', insight_id: 'ins-7a3b' }) first"
+  }
+}
+```
+
+### AST09: Fingerprint Anonymization Verification
+
+Fingerprints must satisfy k-anonymity (min k=5) to prevent reverse-engineering of repository identity from technology profiles.
+
+```yaml
+fingerprint_anonymization:
+  k_anonymity: { min_k: 5, enforcement: pre_match_gate }
+  field_generalization:
+    exact_version_numbers: generalize_to_major
+    directory_structure_depth: max_2_levels
+    custom_config_names: strip
+    internal_hostnames: strip
+  verification_checks:
+    - { id: uniqueness_test, action: generalize_and_retry, max_retries: 3, ast_reference: "AST09" }
+    - { id: quasi_identifier_scan, action: suppress_fields }
+  on_failure: { action: block_fingerprint_sharing, fallback: "Use category tags only" }
+```
+
+```typescript
+interface FingerprintAnonymizationResult {
+  fingerprint_id: string;
+  k_anonymity_score: number;
+  meets_threshold: boolean;
+  quasi_identifiers_found: Array<{ field_combination: string[]; uniqueness_risk: "low" | "medium" | "high" }>;
+  generalized_fields: string[];
+  ast_reference: "AST09";
+}
+```
+
+### Propagation Rate Limiting
+
+Rate limits prevent mass insight injection attacks where a compromised repo floods the global registry.
+
+```yaml
+propagation_rate_limits:
+  per_repository: { max_promotions_per_hour: 5, max_promotions_per_day: 20, max_batch_size: 3 }
+  global:
+    max_promotions_per_hour: 50
+    circuit_breaker: { enabled: true, trip_threshold: 100, trip_window_minutes: 15, reset_after_minutes: 30 }
+  anomaly_detection:
+    - { pattern: single_repo_burst, action: throttle_and_alert }
+    - { pattern: coordinated_promotion, action: quarantine_all_and_alert, ast_reference: "AST09" }
+```
+
+```json
+{
+  "tool": "cortivex_crossrepo",
+  "request": { "action": "promote", "insight_id": "ins-flood-12", "repo": "/path/to/repo" },
+  "response": {
+    "status": "rate_limited",
+    "reason": "Propagation rate limit exceeded: 5/5 promotions this hour",
+    "retry_after_seconds": 2340, "ast_reference": "AST09"
+  }
+}
+```
+
+### Opt-In Consent Management with Cryptographic Proof
+
+Consent is recorded with Ed25519-signed tokens. Revocation cascades to remove all promoted insights from the global registry.
+
+```yaml
+consent_management:
+  model: opt_in
+  consent_token: { algorithm: Ed25519, signature_verification: required_on_every_promotion }
+  consent_scopes:
+    - { scope: promote_insights, description: "Allow promoting anonymized insights to global registry" }
+    - { scope: receive_insights, description: "Allow importing global insights" }
+    - { scope: aggregate_metrics, description: "Allow inclusion in cross-repo analytics" }
+  revocation:
+    immediate_effect: true
+    cascade_actions: [remove_all_promoted_insights, revoke_active_tokens, purge_from_metrics]
+    audit_log: required
+    ast_reference: "AST09"
+```
+
+```json
+{
+  "title": "ConsentToken", "type": "object",
+  "required": ["token_id", "repository_id", "scope", "granted_at", "signature"],
+  "properties": {
+    "token_id": { "type": "string", "pattern": "^consent-[a-z0-9]+$" },
+    "repository_id": { "type": "string" },
+    "scope": { "type": "array", "items": { "type": "string", "enum": ["promote_insights", "receive_insights", "aggregate_metrics"] } },
+    "granted_at": { "type": "string", "format": "date-time" },
+    "signature": { "type": "string" },
+    "ast_reference": { "type": "string", "const": "AST09" }
+  }
+}
+```
+
+### Audit Trail for Cross-Repo Data Flows
+
+Every cross-repo operation produces an immutable, tamper-evident audit log entry with SHA-256 hash chaining and configurable retention.
+
+```yaml
+audit_trail:
+  enabled: true
+  storage: { backend: append_only_log, encryption: aes-256-gcm, integrity: sha256_chain, tamper_detection: true }
+  captured_events:
+    - { event: insight_promoted, fields: [insight_id, source_repo_hash, global_id, pia_id, consent_token_id, timestamp] }
+    - { event: insight_imported, fields: [global_id, target_repo_hash, local_id, timestamp] }
+    - { event: consent_granted, fields: [repository_id, scope, granted_by, timestamp] }
+    - { event: consent_revoked, fields: [repository_id, scope, cascade_actions, timestamp] }
+    - { event: rate_limit_triggered, fields: [repository_id, operation, current_usage, timestamp], ast_reference: "AST09" }
+  retention: { default_days: 730, consent_events_days: 1825 }
+  query_access: { roles: [security-ops, compliance-auditor, privacy-team] }
+```
+
+```json
+{
+  "tool": "cortivex_crossrepo",
+  "request": { "action": "audit_query", "repo": "/path/to/repo", "event_types": ["insight_promoted"], "limit": 50 },
+  "response": {
+    "total_events": 14,
+    "events": [{
+      "event": "insight_promoted", "timestamp": "2026-02-10T14:22:00Z",
+      "insight_id": "ins-7a3b", "global_id": "gi-1a2b",
+      "pia_id": "pia-3c4d5e", "consent_token_id": "consent-x7y8z9", "ast_reference": "AST09"
+    }]
+  }
+}
 ```

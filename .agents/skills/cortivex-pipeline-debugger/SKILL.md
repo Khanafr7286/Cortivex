@@ -829,3 +829,328 @@ session.onBreakpointHit((bp) => {
 });
 await session.waitForCompletion();
 ```
+
+## Security Hardening (OWASP AST10 Aligned)
+
+This section defines security controls for pipeline debugging operations, aligned with the OWASP Automated Security Testing (AST) risk taxonomy. Each subsection maps to a specific AST risk ID and provides enforceable configuration, validation schemas, and MCP tool integration examples.
+
+### AST06: Production Debug Prevention
+
+Debug mode exposes full node inputs, outputs, and agent reasoning chains. Per **AST06** (Insufficient Security Testing in Production), debug mode must be blocked in production environments by default to prevent accidental exposure of intermediate data, cost overruns from paused pipelines, and unauthorized inspection of live execution state.
+
+```yaml
+# .cortivex/security/debug-environment-policy.yaml
+debug_environment_policy:
+  environments:
+    production:
+      debug_allowed: false
+      override_requires:
+        role: security-lead
+        mfa: true
+        approval_count: 2
+        approval_roles: [security-lead, platform-admin]
+        max_override_duration_minutes: 30
+        audit_all_actions: true
+      ast_risk_id: AST06
+    staging:
+      debug_allowed: true
+      restrictions:
+        max_session_duration_minutes: 120
+        read_only_by_default: true
+        trace_auto_redact: true
+    development:
+      debug_allowed: true
+      restrictions: null
+  detection:
+    environment_source: CORTIVEX_ENV       # environment variable
+    fallback: production                    # assume production if unset
+    reject_empty_env: true                  # block debug if env var is missing
+```
+
+MCP tool call that is rejected in production (AST06 enforcement):
+
+```
+cortivex_debug({
+  action: "breakpoint",
+  operation: "set",
+  node_id: "code_review",
+  run_id: "ctx-prod-5a3b"
+})
+```
+
+```json
+{
+  "status": "denied",
+  "reason": "Debug mode is blocked in production (AST06). Request override from security-lead with MFA.",
+  "ast_risk_id": "AST06",
+  "environment": "production",
+  "override_instructions": {
+    "required_role": "security-lead",
+    "mfa_required": true,
+    "approval_endpoint": "/api/debug/override-request"
+  }
+}
+```
+
+### Trace Data Sensitivity Classification
+
+Debug traces capture full node inputs and outputs, which may contain secrets, PII, or proprietary algorithms in intermediate data. Per **AST06**, all intermediate data must be automatically classified by sensitivity level before it is written to the trace store.
+
+```json
+{
+  "$schema": "https://cortivex.dev/schemas/trace-classification/v1.json",
+  "title": "TraceSensitivityClassification",
+  "type": "object",
+  "required": ["classification_id", "rules", "enforcement"],
+  "properties": {
+    "classification_id": { "type": "string", "pattern": "^tcls-[a-z0-9-]+$" },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["label", "level", "patterns"],
+        "properties": {
+          "label": { "type": "string" },
+          "level": { "enum": ["public", "internal", "confidential", "restricted"] },
+          "patterns": { "type": "array", "items": { "type": "string" } },
+          "node_types": { "type": "array", "items": { "type": "string" } },
+          "auto_redact": { "type": "boolean", "default": false },
+          "ast_risk_id": { "type": "string" }
+        }
+      }
+    },
+    "enforcement": {
+      "type": "object",
+      "properties": {
+        "block_unclassified_traces": { "type": "boolean" },
+        "default_level": { "enum": ["internal", "confidential"] },
+        "escalate_on_restricted": { "type": "boolean" }
+      }
+    }
+  }
+}
+```
+
+```yaml
+trace_sensitivity_classification:
+  classification_id: tcls-pipeline-debug
+  rules:
+    - label: secrets-in-tool-args
+      level: restricted
+      patterns:
+        - "(?i)(password|secret|token|api_key)\\s*[:=]"
+        - "(sk-[a-zA-Z0-9]{32,})"
+        - "(ghp_[a-zA-Z0-9]{36})"
+      auto_redact: true
+      ast_risk_id: AST06
+    - label: pii-in-node-output
+      level: confidential
+      patterns:
+        - "(\\b\\d{3}-\\d{2}-\\d{4}\\b)"
+        - "(\\b[\\w.+-]+@[\\w-]+\\.[\\w.-]+\\b)"
+      auto_redact: true
+      ast_risk_id: AST06
+    - label: security-scanner-findings
+      level: confidential
+      node_types: [SecurityScanner]
+      patterns: []
+      auto_redact: false
+      ast_risk_id: AST06
+  enforcement:
+    block_unclassified_traces: true
+    default_level: internal
+    escalate_on_restricted: true
+```
+
+### Remote Debug Session Timeout and Auto-Disconnect
+
+Remote debug sessions that remain open indefinitely create persistent attack surfaces. Per **AST06**, all remote debug sessions must enforce idle timeouts and maximum session durations, with automatic disconnection and trace cleanup.
+
+```yaml
+# .cortivex/security/debug-session-timeout.yaml
+debug_session_timeout:
+  max_session_duration_minutes: 60
+  idle_timeout_minutes: 10
+  warning_before_disconnect_seconds: 120
+  auto_disconnect:
+    enabled: true
+    cleanup_actions:
+      - release_all_breakpoints
+      - resume_paused_pipeline
+      - flush_trace_to_disk
+      - revoke_session_credentials
+  reconnect_policy:
+    allowed: true
+    require_re_authentication: true
+    max_reconnect_attempts: 3
+    cooldown_between_attempts_seconds: 30
+  audit:
+    log_session_start: true
+    log_session_end: true
+    log_idle_warnings: true
+    log_forced_disconnects: true
+    ast_risk_id: AST06
+```
+
+```typescript
+interface DebugSessionTimeoutEvent {
+  session_id: string;
+  run_id: string;
+  event_type: "idle_warning" | "idle_disconnect" | "max_duration_disconnect" | "manual_disconnect";
+  session_duration_seconds: number;
+  idle_duration_seconds: number;
+  cleanup_actions_performed: string[];
+  pipeline_resumed: boolean;
+  ast_risk_id: "AST06";
+  timestamp: string;                     // ISO 8601
+}
+```
+
+```
+cortivex_debug({
+  action: "session_status",
+  run_id: "ctx-remote-7890"
+})
+```
+
+```json
+{
+  "session_id": "dbg-sess-4a2c",
+  "run_id": "ctx-remote-7890",
+  "status": "active",
+  "connected_since": "2026-03-24T09:00:00Z",
+  "idle_since": "2026-03-24T09:42:00Z",
+  "time_to_idle_disconnect_seconds": 480,
+  "time_to_max_duration_seconds": 1080,
+  "ast_risk_id": "AST06"
+}
+```
+
+### Mutation Replay Sandboxing
+
+Cascade mutations propagate modified outputs through the DAG, potentially triggering unintended side effects in downstream nodes. Per **AST06**, all cascade mutation replays must execute in an isolated sandbox environment that prevents writes to the real filesystem, network calls to production services, and modifications to the pipeline state.
+
+```json
+{
+  "$schema": "https://cortivex.dev/schemas/mutation-sandbox/v1.json",
+  "title": "MutationReplaySandboxConfig",
+  "type": "object",
+  "required": ["sandbox_id", "isolation", "resource_limits"],
+  "properties": {
+    "sandbox_id": { "type": "string", "pattern": "^sbox-[a-z0-9-]+$" },
+    "isolation": {
+      "type": "object",
+      "properties": {
+        "filesystem": { "enum": ["copy-on-write", "tmpfs", "none"] },
+        "network": { "enum": ["block-all", "allow-internal", "allow-all"] },
+        "environment_variables": { "enum": ["inherit-safe", "clean", "custom"] },
+        "process_isolation": { "type": "boolean", "default": true }
+      }
+    },
+    "resource_limits": {
+      "type": "object",
+      "properties": {
+        "max_cpu_seconds": { "type": "integer" },
+        "max_memory_mb": { "type": "integer" },
+        "max_disk_write_mb": { "type": "integer" },
+        "max_execution_time_seconds": { "type": "integer" }
+      }
+    },
+    "ast_risk_id": { "type": "string", "const": "AST06" }
+  }
+}
+```
+
+```yaml
+mutation_replay_sandbox:
+  sandbox_id: sbox-cascade-default
+  isolation:
+    filesystem: copy-on-write
+    network: block-all
+    environment_variables: inherit-safe    # strip secrets from env
+    process_isolation: true
+  resource_limits:
+    max_cpu_seconds: 120
+    max_memory_mb: 512
+    max_disk_write_mb: 100
+    max_execution_time_seconds: 180
+  on_violation:
+    action: terminate_and_report
+    preserve_sandbox_state: true          # keep for forensic inspection
+    alert_roles: [security-lead]
+  audit:
+    log_sandbox_creation: true
+    log_resource_usage: true
+    log_violations: true
+    ast_risk_id: AST06
+```
+
+### Breakpoint Injection Prevention
+
+Breakpoints control pipeline execution flow by pausing nodes and exposing internal state. Per **AST06**, only the pipeline owner or designated operators can set breakpoints. This prevents unauthorized users from injecting breakpoints to exfiltrate intermediate data or stall production pipelines.
+
+```yaml
+# .cortivex/security/breakpoint-authorization.yaml
+breakpoint_authorization:
+  policy: owner-and-operators-only
+  roles_allowed:
+    - pipeline-owner
+    - operator
+    - security-lead
+  roles_denied:
+    - viewer
+    - anonymous
+  enforcement:
+    validate_on_set: true
+    validate_on_modify: true
+    reject_unauthorized_silently: false    # return explicit denial
+    audit_all_attempts: true
+  conditional_breakpoint_restrictions:
+    max_condition_complexity: 50           # max AST nodes in expression
+    forbidden_functions:
+      - eval
+      - exec
+      - require
+      - import
+    sanitize_expressions: true            # prevent injection via condition strings
+  ast_risk_id: AST06
+```
+
+```
+cortivex_debug({
+  action: "breakpoint",
+  operation: "set",
+  node_id: "security_scan",
+  condition: "output.summary.critical > 0",
+  run_id: "ctx-a1b2c3",
+  auth: {
+    identity: "viewer@example.com",
+    role: "viewer"
+  }
+})
+```
+
+```json
+{
+  "status": "denied",
+  "reason": "Role 'viewer' is not authorized to set breakpoints (AST06). Required: pipeline-owner, operator, or security-lead.",
+  "ast_risk_id": "AST06",
+  "requested_by": "viewer@example.com",
+  "audit_logged": true
+}
+```
+
+```typescript
+interface BreakpointAuthorizationCheck {
+  breakpoint_id: string;
+  node_id: string;
+  run_id: string;
+  requester_identity: string;
+  requester_role: string;
+  authorized: boolean;
+  denial_reason?: string;
+  condition_sanitized?: boolean;
+  condition_complexity_score?: number;
+  ast_risk_id: "AST06";
+}
+```

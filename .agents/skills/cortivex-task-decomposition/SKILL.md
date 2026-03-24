@@ -565,3 +565,391 @@ MCP tool call for on-demand recalculation:
 ```
 
 The `invert` flag on `estimated_cost` means cheaper tasks receive higher priority scores, favoring quick wins. Recalculation triggers automatically on events in `recalculate_on`, keeping the schedule adaptive.
+
+## Security Hardening (OWASP AST10 Aligned)
+
+This section defines security controls for task decomposition operations, aligned with the OWASP Automated Security Testing (AST) risk taxonomy. Each subsection maps to a specific AST risk ID and provides enforceable configuration, validation schemas, and MCP tool integration examples.
+
+### AST03: Mandatory Forbidden Paths Enforcement
+
+Task decomposition generates file-scoped work items that agents execute autonomously. Per **AST03** (Insufficient Access Control in Automated Testing), certain paths must be unconditionally blocked from all generated tasks to prevent agents from reading, modifying, or exfiltrating sensitive files. The forbidden paths list is immutable at runtime and cannot be overridden by task configuration or user input.
+
+```yaml
+# .cortivex/security/forbidden-paths.yaml
+forbidden_paths:
+  immutable: true                         # cannot be modified at runtime
+  override_allowed: false                 # no user or task can bypass
+  paths:
+    - ".env"
+    - ".env.*"
+    - "**/.env"
+    - "**/.env.*"
+    - ".ssh/"
+    - "**/.ssh/"
+    - "**/credentials"
+    - "**/credentials.*"
+    - "**/*.pem"
+    - "**/*.key"
+    - "**/*.p12"
+    - "**/secrets.yaml"
+    - "**/secrets.json"
+    - "**/.aws/credentials"
+    - "**/.gcp/service-account.json"
+    - "**/id_rsa"
+    - "**/id_ed25519"
+  enforcement:
+    validate_at_decomposition: true       # check before tasks enter queue
+    validate_at_execution: true           # check again before agent starts
+    block_action: reject_task             # reject | warn | quarantine
+    audit_violations: true
+  ast_risk_id: AST03
+```
+
+```json
+{
+  "$schema": "https://cortivex.dev/schemas/forbidden-paths-policy/v1.json",
+  "title": "ForbiddenPathsPolicy",
+  "type": "object",
+  "required": ["policy_id", "paths", "enforcement"],
+  "properties": {
+    "policy_id": { "type": "string", "pattern": "^fpol-[a-z0-9-]+$" },
+    "immutable": { "type": "boolean", "const": true },
+    "paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "enforcement": {
+      "type": "object",
+      "required": ["validate_at_decomposition", "block_action"],
+      "properties": {
+        "validate_at_decomposition": { "type": "boolean" },
+        "validate_at_execution": { "type": "boolean" },
+        "block_action": { "enum": ["reject_task", "warn", "quarantine"] },
+        "audit_violations": { "type": "boolean" }
+      }
+    },
+    "ast_risk_id": { "type": "string", "const": "AST03" }
+  }
+}
+```
+
+MCP tool call that triggers forbidden path rejection (AST03 enforcement):
+
+```
+cortivex_decompose({
+  request: "Read the database credentials from .env and update the config",
+  repo: "/path/to/project",
+  options: { strategy: "dependency-aware" }
+})
+```
+
+```json
+{
+  "status": "rejected",
+  "reason": "Task references forbidden path '.env' (AST03). Sensitive files are unconditionally blocked.",
+  "ast_risk_id": "AST03",
+  "violating_paths": [".env"],
+  "policy_id": "fpol-immutable-default",
+  "remediation": "Remove references to sensitive files. Use environment variable injection via the runtime config instead."
+}
+```
+
+### Task Injection Prevention
+
+The task queue accepts new tasks at runtime via `cortivex_tasks({ action: "add" })`. Per **AST03**, runtime task addition must require explicit authorization to prevent malicious or accidental injection of unauthorized work items that could modify protected files, exfiltrate data, or consume budget.
+
+```yaml
+# .cortivex/security/task-injection-policy.yaml
+task_injection_prevention:
+  runtime_task_addition:
+    enabled: true
+    authorization_required: true
+    allowed_roles:
+      - pipeline-owner
+      - operator
+      - admin
+    denied_roles:
+      - viewer
+      - agent                             # agents cannot self-inject tasks
+    validation:
+      check_forbidden_paths: true         # AST03 path validation on injected tasks
+      check_allowed_node_types: true
+      check_budget_remaining: true
+      max_injected_tasks_per_run: 10
+      require_justification: true
+    audit:
+      log_all_injections: true
+      log_denied_injections: true
+      alert_on_agent_self_inject: true    # alert if an agent attempts self-injection
+  ast_risk_id: AST03
+```
+
+```
+cortivex_tasks({
+  action: "add",
+  run_id: "ctx-a1b2c3",
+  task: {
+    title: "Read SSH keys for deployment",
+    description: "Copy .ssh/id_rsa to deployment config",
+    type: "CustomAgent",
+    priority: 9
+  },
+  auth: { identity: "agent-worker-1", role: "agent" }
+})
+```
+
+```json
+{
+  "status": "denied",
+  "reasons": [
+    "Role 'agent' is not authorized to inject tasks at runtime (AST03)",
+    "Task references forbidden path '.ssh/id_rsa' (AST03)"
+  ],
+  "ast_risk_id": "AST03",
+  "audit_logged": true,
+  "alert_triggered": true
+}
+```
+
+```typescript
+interface TaskInjectionValidation {
+  task_id: string;
+  run_id: string;
+  injected_by: string;
+  role: string;
+  authorized: boolean;
+  path_violations: string[];
+  node_type_allowed: boolean;
+  budget_sufficient: boolean;
+  justification_provided: boolean;
+  ast_risk_id: "AST03";
+}
+```
+
+### Priority Manipulation Protection
+
+Security-critical tasks (vulnerability fixes, secret rotation, access revocation) must maintain minimum priority thresholds. Per **AST03**, tasks tagged with security classifications cannot be deprioritized below a configurable floor, preventing attackers or misconfigured automation from burying urgent security work.
+
+```yaml
+# .cortivex/security/priority-protection.yaml
+priority_manipulation_protection:
+  protected_categories:
+    - match: { tags: [security, vulnerability] }
+      min_priority: 8
+      reason: "Security vulnerabilities cannot be deprioritized below 8"
+    - match: { tags: [secret-rotation] }
+      min_priority: 9
+      reason: "Secret rotation is time-sensitive and cannot be deferred"
+    - match: { tags: [access-revocation] }
+      min_priority: 9
+      reason: "Access revocation must execute promptly"
+    - match: { tags: [compliance, audit] }
+      min_priority: 7
+      reason: "Compliance tasks have regulatory deadlines"
+  enforcement:
+    validate_on_create: true
+    validate_on_update: true
+    validate_on_recalculate: true
+    block_below_floor: true               # reject priority changes below floor
+    audit_attempts: true
+  ast_risk_id: AST03
+```
+
+```
+cortivex_tasks({
+  action: "update",
+  task_id: "task-sec-01",
+  priority: 3,
+  run_id: "ctx-a1b2c3"
+})
+```
+
+```json
+{
+  "status": "denied",
+  "task_id": "task-sec-01",
+  "current_priority": 9,
+  "requested_priority": 3,
+  "min_allowed_priority": 8,
+  "reason": "Task tagged [security, vulnerability] cannot be deprioritized below 8 (AST03)",
+  "ast_risk_id": "AST03",
+  "audit_logged": true
+}
+```
+
+```json
+{
+  "$schema": "https://cortivex.dev/schemas/priority-protection/v1.json",
+  "title": "PriorityProtectionRule",
+  "type": "object",
+  "required": ["match", "min_priority", "ast_risk_id"],
+  "properties": {
+    "match": {
+      "type": "object",
+      "properties": {
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "node_types": { "type": "array", "items": { "type": "string" } },
+        "title_pattern": { "type": "string" }
+      }
+    },
+    "min_priority": { "type": "integer", "minimum": 1, "maximum": 10 },
+    "reason": { "type": "string" },
+    "ast_risk_id": { "type": "string", "const": "AST03" }
+  }
+}
+```
+
+### Recursive Decomposition Depth Limits
+
+Recursive decomposition can be exploited to trigger unbounded recursion, exhausting CPU, memory, and API budget. Per **AST03**, strict depth limits and resource ceilings must be enforced to prevent denial-of-service through decomposition amplification.
+
+```yaml
+# .cortivex/security/decomposition-depth-limits.yaml
+recursive_decomposition_limits:
+  max_depth: 5
+  max_total_tasks: 200
+  max_tasks_per_level:
+    depth_0: 20
+    depth_1: 50
+    depth_2: 80
+    depth_3: 40
+    depth_4: 10
+    depth_5: 5
+  resource_ceilings:
+    max_decomposition_time_seconds: 120
+    max_decomposition_cost_usd: 0.50
+    max_memory_mb: 256
+  on_limit_exceeded:
+    action: halt_and_return_partial       # halt_and_return_partial | reject | warn
+    include_truncation_report: true
+    alert_roles: [operator, admin]
+  cycle_detection:
+    enabled: true
+    action: reject_with_diagnostic
+    max_graph_edges: 500
+  audit:
+    log_depth_reached: true
+    log_limit_violations: true
+    ast_risk_id: AST03
+```
+
+```
+cortivex_decompose({
+  request: "Recursively refactor every module in the monorepo",
+  repo: "/path/to/large-monorepo",
+  options: {
+    strategy: "recursive",
+    depth: 20,
+    granularity: "fine"
+  }
+})
+```
+
+```json
+{
+  "status": "depth_limited",
+  "requested_depth": 20,
+  "enforced_max_depth": 5,
+  "tasks_generated": 147,
+  "tasks_at_limit": true,
+  "truncation_report": {
+    "depth_0_tasks": 12,
+    "depth_1_tasks": 45,
+    "depth_2_tasks": 58,
+    "depth_3_tasks": 27,
+    "depth_4_tasks": 5,
+    "suppressed_subtrees": 8
+  },
+  "ast_risk_id": "AST03",
+  "recommendation": "Reduce scope or increase split_threshold_minutes to produce fewer tasks"
+}
+```
+
+### Constraint Validation: Reject Security-Violating Tasks
+
+The constraint propagation engine must reject any generated task that violates security constraints, rather than merely flagging it. Per **AST03**, tasks that reference forbidden paths, exceed budget allocations, or specify disallowed node types must be removed from the queue before execution begins.
+
+```yaml
+# .cortivex/security/constraint-validation.yaml
+security_constraint_validation:
+  validate_at:
+    - decomposition_output              # before tasks enter queue
+    - runtime_injection                 # when tasks are added mid-run
+    - priority_recalculation            # when priorities are recomputed
+  rules:
+    - rule_id: forbidden-path-check
+      check: "task.description NOT MATCHES forbidden_paths"
+      on_violation: reject
+      ast_risk_id: AST03
+    - rule_id: allowed-node-type-check
+      check: "task.type IN allowed_node_types"
+      on_violation: reject
+      ast_risk_id: AST03
+    - rule_id: budget-ceiling-check
+      check: "SUM(task.estimated_cost) <= budget.max_total_cost_usd"
+      on_violation: reject_lowest_priority
+      ast_risk_id: AST03
+    - rule_id: scope-boundary-check
+      check: "task.target_paths SUBSET_OF allowed_paths"
+      on_violation: reject
+      ast_risk_id: AST03
+    - rule_id: no-privilege-escalation
+      check: "task.required_role <= current_user.role"
+      on_violation: reject
+      ast_risk_id: AST03
+  enforcement:
+    fail_open: false                      # reject on validation error, not allow
+    audit_all_validations: true
+    report_violations_to: [security-lead]
+```
+
+```typescript
+interface ConstraintValidationResult {
+  run_id: string;
+  tasks_validated: number;
+  tasks_accepted: number;
+  tasks_rejected: number;
+  violations: Array<{
+    task_id: string;
+    rule_id: string;
+    violation_detail: string;
+    action_taken: "reject" | "reject_lowest_priority" | "quarantine";
+    ast_risk_id: "AST03";
+  }>;
+  validation_passed: boolean;
+}
+```
+
+```
+cortivex_decompose({
+  request: "Update secrets.yaml with new API keys and deploy to production",
+  repo: "/path/to/project",
+  options: { strategy: "dependency-aware", dry_run: true }
+})
+```
+
+```json
+{
+  "status": "validation_failed",
+  "tasks_generated": 3,
+  "tasks_rejected": 2,
+  "violations": [
+    {
+      "task_id": "task-1",
+      "rule_id": "forbidden-path-check",
+      "violation_detail": "Task references 'secrets.yaml' which is in forbidden_paths",
+      "action_taken": "reject",
+      "ast_risk_id": "AST03"
+    },
+    {
+      "task_id": "task-2",
+      "rule_id": "scope-boundary-check",
+      "violation_detail": "Task targets production deployment path outside allowed_paths",
+      "action_taken": "reject",
+      "ast_risk_id": "AST03"
+    }
+  ],
+  "remediation": "Remove references to forbidden paths and restrict operations to allowed_paths scope"
+}
+```

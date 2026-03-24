@@ -758,3 +758,298 @@ async function safeBatchClaim(files: string[], agentId: string): Promise<boolean
   return claim.status === "claimed" || claim.status === "partial";
 }
 ```
+
+## Security Hardening (OWASP AST10 Aligned)
+
+This section defines security controls for the mesh coordination layer, mapped to the OWASP Agentic Security Threats (AST) taxonomy. These controls protect against skill file tampering, file integrity violations, and insufficient audit trails in multi-agent mesh operations.
+
+### AST01: Skill File Tamper Detection
+
+Because this skill uses `injection: always`, its contents are loaded into every spawned agent's system prompt. A tampered skill file could inject malicious instructions into all agents simultaneously. This makes hash verification on load a critical control against AST01 (Prompt Injection).
+
+```yaml
+# mesh-integrity.yaml — AST01 Tamper Detection
+skill_integrity:
+  ast01_tamper_detection:
+    enabled: true
+    target_skill: "cortivex-mesh"
+    injection_mode: "always"  # this skill is auto-injected — highest risk
+
+    hash_verification:
+      algorithm: "sha256"
+      expected_hash_source: ".cortivex/manifests/skill-hashes.json"
+      verify_on: ["agent_spawn", "skill_reload", "pipeline_start"]
+      fail_action: "abort_pipeline"  # do NOT inject a tampered skill
+
+    signature_verification:
+      enabled: true
+      public_key_path: "/etc/cortivex/keys/skill-signing.pub"
+      signature_path: ".agents/skills/cortivex-mesh/SKILL.md.sig"
+      algorithm: "ed25519"
+
+    runtime_monitoring:
+      detect_in_memory_modification: true
+      recheck_interval_seconds: 300
+      on_drift_detected: "kill_affected_agents"
+```
+
+The skill hash manifest records the expected hash for each skill file:
+
+```json
+{
+  "$schema": "https://cortivex.dev/schemas/skill-hash-manifest/v1.json",
+  "type": "object",
+  "properties": {
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["skill_name", "file_path", "sha256", "signed_at"],
+        "properties": {
+          "skill_name": { "type": "string" },
+          "file_path": { "type": "string" },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "signed_at": { "type": "string", "format": "date-time" },
+          "signed_by": { "type": "string" },
+          "injection_mode": {
+            "type": "string",
+            "enum": ["always", "on_demand", "never"]
+          }
+        }
+      }
+    },
+    "manifest_hash": {
+      "type": "string",
+      "description": "SHA-256 of the entire skills array for manifest self-verification"
+    }
+  }
+}
+```
+
+Verify integrity before agent spawn using MCP:
+
+```json
+{
+  "tool": "cortivex_mesh",
+  "request": {
+    "action": "verify_skill_integrity",
+    "skill_name": "cortivex-mesh",
+    "manifest_path": ".cortivex/manifests/skill-hashes.json",
+    "ast_risk_id": "AST01",
+    "abort_on_mismatch": true
+  }
+}
+```
+
+### AST06: File Integrity Validation Before Claim Release
+
+When an agent releases a file claim, the mesh MUST validate that the file was modified in an expected manner. This prevents AST06 (Insecure Input/Output Handling) scenarios where a compromised agent writes malicious content and then releases the claim, allowing other agents to consume corrupted files.
+
+```yaml
+# claim-release-validation.yaml — AST06 File Integrity on Release
+claim_release_security:
+  ast06_file_validation:
+    enabled: true
+    validate_on_release: true
+
+    checks:
+      - name: size_delta_check
+        description: "Reject releases where file size changed by more than 500%"
+        max_growth_percent: 500
+        max_shrink_percent: 95
+        on_violation: "hold_claim_and_alert"
+
+      - name: content_type_check
+        description: "Ensure file still matches expected content type"
+        enforce_original_mime: true
+        on_violation: "reject_release"
+
+      - name: binary_injection_check
+        description: "Detect binary content injected into text files"
+        scan_for_binary: true
+        on_violation: "quarantine_and_alert"
+
+      - name: secret_scan
+        description: "Block release if secrets were written into the file"
+        patterns:
+          - "(?i)(api[_-]?key|secret|password|token)\\s*[:=]\\s*['\"][^'\"]{8,}"
+          - "-----BEGIN (RSA |EC )?PRIVATE KEY-----"
+          - "ghp_[a-zA-Z0-9]{36}"
+          - "sk-[a-zA-Z0-9]{48}"
+        on_violation: "reject_release_and_audit"
+```
+
+Enforce validation at release time:
+
+```json
+{
+  "tool": "cortivex_mesh",
+  "request": {
+    "action": "release",
+    "claim_id": "claim-8x9y2z",
+    "agent_id": "agent-auto-fixer-2b4d",
+    "files": ["src/auth/login.ts"],
+    "ast06_validate": true,
+    "integrity_checks": ["size_delta", "content_type", "binary_injection", "secret_scan"]
+  }
+}
+```
+
+### AST09: Mesh Operation Audit Trail
+
+Every mesh operation (check, claim, release, conflict, extend, wait) MUST produce an immutable audit record. This addresses AST09 (Insufficient Logging and Monitoring) by creating a complete chain-of-custody for file ownership throughout a pipeline run.
+
+```json
+{
+  "$schema": "https://cortivex.dev/schemas/mesh-audit-entry/v1.json",
+  "type": "object",
+  "required": ["audit_id", "timestamp", "ast_risk_id", "operation", "agent_id"],
+  "properties": {
+    "audit_id": { "type": "string", "format": "uuid" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "ast_risk_id": { "type": "string", "enum": ["AST09"] },
+    "operation": {
+      "type": "string",
+      "enum": [
+        "check", "claim", "release", "extend", "wait",
+        "claim_denied", "claim_expired", "conflict_reported",
+        "directory_claim", "batch_claim", "force_release",
+        "integrity_violation", "tamper_detected"
+      ]
+    },
+    "agent_id": { "type": "string" },
+    "files": { "type": "array", "items": { "type": "string" } },
+    "claim_id": { "type": "string" },
+    "outcome": {
+      "type": "string",
+      "enum": ["success", "denied", "timeout", "error", "violation"]
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "run_id": { "type": "string" },
+        "blocking_agent": { "type": "string" },
+        "ttl_seconds": { "type": "integer" },
+        "held_duration_seconds": { "type": "number" },
+        "integrity_check_results": { "type": "object" }
+      }
+    },
+    "chain_hash": {
+      "type": "string",
+      "description": "SHA-256 linking this entry to the previous, forming a tamper-evident chain"
+    }
+  }
+}
+```
+
+Configure audit logging for the mesh:
+
+```yaml
+mesh:
+  audit:
+    ast09_compliance: true
+    log_destination: ".cortivex/audit/mesh-operations.jsonl"
+    hash_chain: true
+    include_file_hashes: true  # record SHA-256 of files at claim and release
+    retention_days: 90
+    export_format: "jsonl"
+    real_time_stream: true     # emit events as they occur for external SIEM
+```
+
+### Partition-Mode Security Defaults
+
+The default partition write policy MUST be `freeze`, not `optimistic_continue`. Optimistic continue during a network partition allows conflicting writes across isolated segments, which can lead to data corruption that reconciliation cannot fully resolve. This is a security-critical default.
+
+```yaml
+# partition-security-defaults.yaml
+partition_security:
+  mandatory_defaults:
+    write_policy: "freeze"            # REQUIRED: never optimistic_continue
+    read_policy: "cached_only"        # stale reads are acceptable; blind writes are not
+    claim_behavior: "deny_new"        # no new claims during partition
+
+  prohibited_configurations:
+    - write_policy: "optimistic_continue"
+      reason: "Risk of conflicting writes across partitions leading to unrecoverable corruption"
+      ast_risk_ids: ["AST06", "AST09"]
+
+  enforcement:
+    reject_optimistic_continue: true  # coordinator refuses to start with this config
+    log_partition_events: true        # AST09: all partition events are audited
+    require_quorum_for_writes: true   # writes require majority quorum confirmation
+    min_quorum_percentage: 51
+```
+
+Validate partition configuration at pipeline start:
+
+```json
+{
+  "tool": "cortivex_mesh",
+  "request": {
+    "action": "validate_partition_policy",
+    "policy_path": "partition-security-defaults.yaml",
+    "reject_optimistic_continue": true,
+    "ast_risk_ids": ["AST06", "AST09"]
+  }
+}
+```
+
+### Stale Claim Timeout Enforcement
+
+Stale claims that exceed their TTL without renewal MUST be forcibly released to prevent resource exhaustion. An agent that holds claims indefinitely (whether due to a bug, crash, or malicious behavior) blocks all other agents from accessing those files, effectively creating a denial-of-service condition.
+
+```yaml
+stale_claim_enforcement:
+  enabled: true
+  max_ttl_seconds: 1800              # absolute maximum claim duration
+  max_renewals: 5                     # cap on how many times a claim can be extended
+  grace_period_seconds: 10            # brief window after TTL before force-release
+  force_release_on_agent_death: true  # immediately release if owning agent is dead
+
+  escalation:
+    warn_at_percent: 75               # alert when 75% of TTL consumed
+    alert_at_percent: 90              # escalate when 90% consumed
+    force_release_at_percent: 100     # hard release at 100%
+
+  audit:
+    log_all_expirations: true         # AST09: every expiration is logged
+    log_force_releases: true
+    include_held_duration: true
+    include_agent_state_at_expiry: true
+```
+
+Monitor stale claims via MCP:
+
+```json
+{
+  "tool": "cortivex_mesh",
+  "request": {
+    "action": "audit_stale_claims",
+    "threshold_seconds": 900,
+    "include_agent_health": true,
+    "auto_release_dead_agents": true,
+    "ast_risk_id": "AST09"
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "stale_claims": [
+    {
+      "claim_id": "claim-old-7k2m",
+      "agent_id": "agent-fixer-9e1f",
+      "agent_status": "dead",
+      "files": ["src/utils/helpers.ts"],
+      "claimed_at": "2026-03-24T13:45:00Z",
+      "ttl_seconds": 300,
+      "expired_at": "2026-03-24T13:50:00Z",
+      "action_taken": "force_released",
+      "audit_entry_id": "evt-3a2b1c0d"
+    }
+  ],
+  "total_released": 1,
+  "ast_risk_id": "AST09"
+}

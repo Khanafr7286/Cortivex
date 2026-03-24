@@ -1185,3 +1185,124 @@ interface CostAnalysisResult {
   summary: { current_cost_per_run: number; optimized_cost_per_run: number; total_savings_pct: number; quality_impact: "none" | "minimal" | "moderate"; nodes_changed: number };
 }
 ```
+
+## Security Hardening (OWASP AST10 Aligned)
+
+### AST03: Per-Node Permission Manifests
+
+Every node declares a permission manifest (AST03 -- Excessive Permissions) enumerating allowed file paths, tools, and network access. The runtime denies anything not listed.
+
+```yaml
+node_permissions:
+  SecurityScanner:
+    filesystem: { read: ["src/**", "lib/**", "package.json", "Cargo.toml"], write: [] }
+    tools: { allowed: [file_read, grep, glob], denied: [file_write, bash, file_delete] }
+    network: { allowed_hosts: ["cve.circl.lu", "osv.dev"], denied: ["*"] }
+  AutoFixer:
+    filesystem: { read: ["src/**", "lib/**", "tests/**"], write: ["src/**", "lib/**"] }
+    tools: { allowed: [file_read, file_write, grep, glob], denied: [bash, file_delete] }
+    network: { denied: ["*"] }
+  TestRunner:
+    filesystem: { read: ["**/*"], write: ["/tmp/**", "coverage/**"] }
+    tools: { allowed: [file_read, bash], denied: [file_write, file_delete] }
+    network: { allowed_hosts: ["localhost"], denied: ["*"] }
+```
+
+```json
+{ "method": "cortivex_permission_validate", "params": { "node_type": "AutoFixer", "requested_access": { "filesystem_write": ["src/utils/parser.ts"], "tools": ["file_write"] } } }
+```
+
+### AST06: Shell Command Allowlists for TestRunner and CustomAgent
+
+Only TestRunner and CustomAgent may invoke shell commands (AST06 -- Excessive Agency), both under strict allowlists.
+
+```yaml
+shell_policy:
+  enforcement: strict
+  default_action: deny
+  TestRunner:
+    allowed_commands:
+      - { pattern: "npm test*", timeout_seconds: 300 }
+      - { pattern: "npx jest*", timeout_seconds: 300 }
+      - { pattern: "pytest*", timeout_seconds: 300 }
+      - { pattern: "cargo test*", timeout_seconds: 300 }
+    blocked_patterns: ["rm *", "curl *", "wget *", "*| bash*", "sudo *"]
+  CustomAgent:
+    allowed_commands: []              # must be explicitly configured per-instance
+    require_explicit_allowlist: true
+    blocked_patterns: ["rm -rf *", "eval *", "exec *", "sudo *", "> /dev/*"]
+  argument_sanitization: { strip_shell_metacharacters: true, block_path_traversal: true }
+```
+
+```json
+{ "method": "cortivex_shell_validate", "params": { "node_type": "TestRunner", "command": "npm test -- --coverage" } }
+```
+
+### Secret Handling During SecurityScanner Execution
+
+SecurityScanner detects secrets but must never persist them to disk or logs (in-memory only, zeroized on completion).
+
+```yaml
+secret_handling:
+  SecurityScanner:
+    detection: { patterns: ["API[_-]?KEY", "SECRET[_-]?KEY", "PRIVATE[_-]?KEY", "ghp_[a-zA-Z0-9]{36}"] }
+    output_policy: { redact_values: true, report_location_only: true, max_context_chars: 40 }
+    storage: { persist_to_disk: false, persist_to_logs: false, memory_policy: zeroize_on_complete }
+```
+
+```json
+{ "method": "cortivex_secret_policy_check", "params": { "node_type": "SecurityScanner", "checks": ["no_disk_persistence", "output_redaction", "memory_zeroization"] } }
+```
+
+### Custom Node Registration Validation
+
+Custom node registration (AST03, AST06) validates definitions to reject unsafe system prompts and excessive tool requests.
+
+```typescript
+const registrationPolicy = {
+  system_prompt_checks: {
+    block_patterns: ["ignore previous instructions", "act as root", "bypass security", "disable safety"],
+    max_length: 10000,
+    require_role_declaration: true,
+  },
+  tool_access_checks: {
+    max_tools: 5,
+    prohibited_tools: ["file_delete", "process_kill", "env_set", "network_raw"],
+  },
+  resource_checks: { max_timeout_seconds: 600, max_tokens: 16384, max_output_size_bytes: 1048576 },
+};
+```
+
+```json
+{ "method": "cortivex_node_register", "params": { "name": "ComplianceAuditor", "system_prompt": "You are a compliance auditing agent.", "tools": ["file_read", "grep"], "validate_security": true } }
+```
+
+```json
+{ "registered": false, "validation_errors": [{ "check": "system_prompt_checks", "reason": "Blocked pattern detected", "ast_risk": "AST03" }, { "check": "tool_access_checks", "reason": "Tool 'file_delete' is prohibited", "ast_risk": "AST06" }] }
+```
+
+### Model Tier Enforcement
+
+Security-critical nodes require minimum model capability (AST06) to prevent false negatives from underpowered models.
+
+```yaml
+model_tier_enforcement:
+  tiers:
+    tier_1_high:
+      minimum_model: claude-sonnet-4-20250514
+      applies_to: [SecurityScanner, BugHunter, RefactorAgent]
+    tier_2_standard:
+      minimum_model: claude-sonnet-4-20250514
+      applies_to: [CodeReviewer, ArchitectAnalyzer, AutoFixer, TestGenerator]
+    tier_3_lightweight:
+      minimum_model: claude-haiku-4-20250414
+      applies_to: [LintFixer, TestRunner, PRCreator, ChangelogWriter]
+  overrides: { allow_downgrade: false, allow_upgrade: true, audit_downgrades: true }
+```
+
+```json
+{ "method": "cortivex_model_tier_check", "params": { "pipeline": "security-audit", "node_assignments": [{ "node_id": "security_scan", "type": "SecurityScanner", "model": "claude-haiku-4-20250414" }] } }
+```
+
+```json
+{ "valid": false, "violations": [{ "node_id": "security_scan", "assigned_model": "claude-haiku-4-20250414", "minimum_required": "claude-sonnet-4-20250514", "tier": "tier_1_high", "ast_risk": "AST06" }] }

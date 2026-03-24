@@ -456,3 +456,125 @@ const result = await cortivex_template_generate({
 // result.saved === true
 // Available via: /cortivex run a11y-fix-and-verify
 ```
+
+## Security Hardening (OWASP AST10 Aligned)
+
+### AST01/AST02: Template Signature Verification
+
+External templates must be Ed25519-signed and verified before use (AST01 -- Prompt Injection, AST02 -- Improper Tool Access Control).
+
+```yaml
+template_signing:
+  algorithm: ed25519
+  key_management: { public_keys_dir: .cortivex/keys/trusted/, key_rotation_days: 90 }
+  verification_policy: { require_signature: true, require_trusted_key: true, fail_open: false }
+```
+
+```json
+{
+  "title": "TemplateSignatureEnvelope", "type": "object",
+  "required": ["template_hash", "signature", "signer_key_id", "signed_at"],
+  "properties": {
+    "template_hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "signature": { "type": "string" }, "signer_key_id": { "type": "string" },
+    "signed_at": { "type": "string", "format": "date-time" } }
+}
+```
+
+```json
+{ "method": "cortivex_template_verify", "params": { "template_file": "team-review.yaml", "signature_file": "team-review.yaml.sig", "trusted_keys_dir": ".cortivex/keys/trusted/" } }
+```
+
+### Remote Template Repository Validation
+
+Remote repos are validated against an allowlist with hash pinning (AST01, AST02) to prevent supply-chain attacks.
+
+```yaml
+remote_template_policy:
+  enforcement: strict
+  allowed_repositories:
+    - { url: "https://github.com/my-org/cortivex-templates", require_signature: true, branch_allowlist: ["main"] }
+  blocked_repositories: [{ url_pattern: "http://*" }, { url_pattern: "*gist.github.com*" }]
+  hash_pinning: { enabled: true, pin_file: .cortivex/security/template-pins.yaml, auto_update_pins: false }
+```
+
+```json
+{ "method": "cortivex_remote_template_validate", "params": { "repository": "https://github.com/my-org/cortivex-templates", "template": "pr-review-strict", "version": "2.3.1" } }
+```
+
+### Template Parameter Sanitization
+
+Runtime parameters flow into node configs; without sanitization they enable injection (AST01).
+
+```yaml
+parameter_sanitization:
+  global_rules: { max_string_length: 1024, strip_null_bytes: true, strip_control_characters: true }
+  type_enforcement:
+    string:
+      block_patterns: ["\\$\\{.*\\}", "\\{\\{.*\\}\\}", "`.*`", "\\$\\(.*\\)", ";.*", "\\|.*"]
+      max_length: 512
+    number: { min: -1000000, max: 1000000, reject_nan: true }
+    enum: { validate_against_schema: true }
+  per_parameter_overrides:
+    target_path: { block_path_traversal: true, allowed_prefixes: ["src/", "lib/", "tests/"] }
+    test_command: { allowlist_only: true, reference_policy: ".cortivex/security/shell-allowlists.yaml" }
+```
+
+```json
+{ "method": "cortivex_parameter_sanitize", "params": { "template": "pr-review", "parameters": { "branch": "feature/auth", "coverage_threshold": 80 } } }
+```
+
+```json
+{ "valid": false, "violations": [{ "parameter": "branch", "value": "main; rm -rf /", "matched_pattern": ";.*", "ast_risk": "AST01" }] }
+```
+
+### Risk Tier Classification (L0-L3 per OWASP AST)
+
+Every template is assigned a risk tier determining runtime security controls.
+
+```yaml
+risk_tier_classification:
+  L0_minimal:
+    criteria: { no_modification_nodes: true, no_shell_execution: true }
+    controls: { require_approval: false, sandbox_level: none }
+  L1_standard:
+    criteria: { has_modification_nodes: true, no_shell_execution: true }
+    controls: { require_signature: true, sandbox_level: filesystem }
+  L2_elevated:
+    criteria: { has_shell_execution: true }
+    controls: { require_approval: true, sandbox_level: container, cost_gate_required: true }
+  L3_critical:
+    criteria: { has_deployment_nodes: true }
+    controls: { require_multi_party_approval: true, sandbox_level: firecracker, dry_run_mandatory: true }
+```
+
+```json
+{ "method": "cortivex_template_classify", "params": { "template": "pr-review" } }
+```
+
+```json
+{ "risk_tier": "L2_elevated", "ast_risks_addressed": ["AST01", "AST02", "AST03", "AST06"], "required_controls": { "require_approval": true, "sandbox_level": "container" } }
+```
+
+### Template Import Sandboxing
+
+External templates are parsed in an isolated context (AST01) to prevent malicious YAML from affecting the host engine.
+
+```yaml
+import_sandbox:
+  isolation_level: process
+  parser_config:
+    yaml_safe_load: true
+    max_document_size_bytes: 102400
+    disallow_anchors: true            # billion laughs prevention
+    disallow_custom_tags: true        # block !!python/object, !!js/function
+  post_parse_validation: { schema_check: true, prompt_injection_scan: true, tool_access_audit: true }
+  quarantine: { quarantine_dir: .cortivex/quarantine/, quarantine_on_failure: true }
+```
+
+```json
+{ "method": "cortivex_template_import", "params": { "source": "./shared/team-review.yaml", "save_as": "team-review", "sandbox": true, "verify_signature": true } }
+```
+
+```json
+{ "imported": false, "quarantined": true, "validation_errors": [{ "check": "prompt_injection_scan", "ast_risk": "AST01" }, { "check": "tool_access_audit", "ast_risk": "AST02" }] }

@@ -557,3 +557,295 @@ When the MeshResolver encounters failures or agents become unresponsive, failove
 ```
 
 When `fallback-to-local` activates, each agent uses local conflict resolution until the MeshResolver recovers. At degradation level 3, the coordinator pauses all agents, consolidates remaining work into fewer agents, and resumes with a simplified allocation map.
+
+## Security Hardening (OWASP AST10 Aligned)
+
+This section defines security controls for Cortivex mesh coordination operations, aligned with the OWASP Agentic Security Top 10 risk framework. Each subsection references the specific AST risk ID it mitigates.
+
+### AST06: Force-Release Protection
+
+The `preempt` resolution strategy forcibly releases an agent's file claims, which can cause data loss if abused. Force-release operations require elevated approval to prevent unauthorized or accidental claim eviction (AST06).
+
+```yaml
+# AST06 -- Require elevated approval for preemptive claim release
+resolver:
+  type: MeshResolver
+  config:
+    strategy: priority
+    force_release_policy:
+      require_approval: true                  # AST06: no auto-preempt without authorization
+      approval_source: coordinator            # only the SwarmCoordinator can approve
+      require_reason: true                    # must provide justification string
+      max_force_releases_per_run: 5           # AST06: cap to prevent abuse
+      cooldown_after_force_release_ms: 5000   # prevent rapid repeated preemptions
+      audit:
+        log_all_force_releases: true
+        include_approver_identity: true
+        alert_on_threshold_exceeded: true
+```
+
+```json
+{
+  "$schema": "https://cortivex.io/schemas/force-release-request.json",
+  "type": "object",
+  "properties": {
+    "action": { "const": "force_release" },
+    "file": { "type": "string" },
+    "current_owner": { "type": "string" },
+    "requested_by": { "type": "string" },
+    "approved_by": { "type": "string" },
+    "reason": { "type": "string", "minLength": 10 },
+    "approval_token": { "type": "string" },
+    "ast_risk_id": { "const": "AST06" }
+  },
+  "required": ["action", "file", "current_owner", "requested_by", "approved_by", "reason", "ast_risk_id"]
+}
+```
+
+MCP tool invocation with approval:
+
+```
+cortivex_mesh_resolver({
+  action: "force_resolve",
+  file: "src/auth/session.ts",
+  winner: "agent-worker-5",
+  approval_token: "apr-9f2e-coordinator",
+  reason: "agent-worker-2 unresponsive for 120s; blocking critical path"
+})
+```
+
+### Transaction Rollback Integrity
+
+When rolling back file modifications in `all-or-nothing` transaction groups, the system must verify file state before and after the rollback to prevent partial rollbacks or state corruption (AST06).
+
+```yaml
+# AST06 -- Verify file integrity during transaction rollback
+resolver:
+  config:
+    transactions:
+      enabled: true
+      rollback_integrity:
+        verify_pre_state: true                # AST06: hash file content before rollback
+        verify_post_state: true               # AST06: confirm rollback restored original
+        hash_algorithm: sha256
+        on_integrity_mismatch: halt_and_alert # do not proceed if hashes diverge
+        preserve_rollback_evidence: true      # keep copies of pre/post state
+        evidence_retention_hours: 72
+      groups:
+        - name: auth-refactor
+          files: [src/auth/login.ts, src/auth/session.ts]
+          atomicity: all-or-nothing
+          rollback_on_failure: true
+```
+
+```json
+{
+  "tool": "cortivex_mesh_resolver",
+  "request": {
+    "action": "verify_rollback",
+    "transaction_id": "txn-3f8a",
+    "checks": ["pre_state_hash_match", "post_state_hash_match", "no_partial_writes"]
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "transaction_id": "txn-3f8a",
+  "status": "rollback_verified",
+  "files": [
+    {
+      "path": "src/auth/login.ts",
+      "pre_hash": "sha256:a1b2c3d4...",
+      "post_hash": "sha256:a1b2c3d4...",
+      "match": true
+    },
+    {
+      "path": "src/auth/session.ts",
+      "pre_hash": "sha256:e5f6a7b8...",
+      "post_hash": "sha256:e5f6a7b8...",
+      "match": true
+    }
+  ],
+  "integrity": "verified",
+  "ast_risk_id": "AST06"
+}
+```
+
+### Deadlock Detection Timeout Limits
+
+Unbounded deadlock detection intervals create resource starvation attack vectors where a malicious or buggy agent can hold claims indefinitely. Strict timeout limits prevent agents from monopolizing resources (AST06).
+
+```yaml
+# AST06 -- Bound deadlock detection to prevent resource starvation
+resolver:
+  config:
+    deadlock_detection: true
+    deadlock_security:
+      max_claim_hold_seconds: 600            # AST06: absolute max any agent can hold a file
+      max_wait_seconds: 120                  # AST06: max time waiting for a contested file
+      max_detection_cycles: 50               # prevent infinite detection loops
+      starvation_detection:
+        enabled: true                        # detect agents repeatedly denied access
+        threshold_consecutive_denials: 5
+        on_starvation: escalate_to_coordinator
+      timeout_actions:
+        on_claim_timeout: force_release_and_requeue
+        on_wait_timeout: reassign_task
+        on_detection_loop: halt_and_alert
+```
+
+```typescript
+import { MeshSecurity } from "@cortivex/mesh";
+
+// AST06: Configure starvation prevention at runtime
+const meshSecurity = new MeshSecurity({
+  maxClaimHoldSeconds: 600,
+  maxWaitSeconds: 120,
+  starvationDetection: {
+    enabled: true,
+    consecutiveDenialThreshold: 5,
+    onStarvation: (event) => {
+      meshSecurity.escalate({
+        agent: event.agentId,
+        file: event.contestedFile,
+        denials: event.consecutiveDenials,
+        astRiskId: "AST06",
+      });
+    },
+  },
+});
+```
+
+### Protocol Switching Authorization
+
+Switching coordination protocols at runtime (e.g., from `pessimistic-locking` to `optimistic-concurrency`) changes the security posture of the entire pipeline. Protocol switches must require explicit approval and must be logged for audit purposes (AST06).
+
+```json
+{
+  "$schema": "https://cortivex.io/schemas/protocol-switch-policy.json",
+  "type": "object",
+  "properties": {
+    "protocol_switching": {
+      "type": "object",
+      "properties": {
+        "require_approval": { "type": "boolean", "default": true },
+        "allowed_transitions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "from": { "enum": ["pessimistic-locking", "optimistic-concurrency", "hybrid"] },
+              "to": { "enum": ["pessimistic-locking", "optimistic-concurrency", "hybrid"] },
+              "approval_level": { "enum": ["coordinator", "admin", "quorum"] }
+            },
+            "required": ["from", "to", "approval_level"]
+          }
+        },
+        "deny_by_default": { "type": "boolean", "default": true },
+        "ast_risk_id": { "const": "AST06" }
+      }
+    }
+  }
+}
+```
+
+```yaml
+# AST06 -- Restrict protocol transitions to authorized parties
+resolver:
+  config:
+    protocol_switching:
+      require_approval: true                  # AST06: no silent protocol changes
+      deny_by_default: true                   # unlisted transitions are blocked
+      allowed_transitions:
+        - from: pessimistic-locking
+          to: optimistic-concurrency
+          approval_level: admin               # AST06: elevated approval required
+        - from: optimistic-concurrency
+          to: pessimistic-locking
+          approval_level: coordinator         # downgrade is less risky
+        - from: pessimistic-locking
+          to: hybrid
+          approval_level: coordinator
+      audit:
+        log_all_switch_requests: true
+        log_denied_switches: true
+        alert_on_unapproved_attempt: true
+```
+
+MCP tool for authorized protocol switch:
+
+```
+cortivex_coordination_configure({
+  action: "set_protocol",
+  run_id: "ctx-d4e5f6",
+  protocol: "optimistic-concurrency",
+  approval_token: "apr-admin-7c3e",
+  reason: "Switching to optimistic for read-heavy phase of migration"
+})
+```
+
+### Conflict Resolution Audit Trail
+
+Every conflict resolution decision must produce an immutable audit record. The audit trail captures who was involved, what strategy was applied, the outcome, and a timestamp, enabling post-incident forensic analysis (AST06).
+
+```json
+{
+  "$schema": "https://cortivex.io/schemas/conflict-audit-record.json",
+  "type": "object",
+  "properties": {
+    "record_id": { "type": "string", "pattern": "^aud-[a-f0-9]{8}$" },
+    "conflict_id": { "type": "string" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "agents_involved": { "type": "array", "items": { "type": "string" } },
+    "contested_file": { "type": "string" },
+    "strategy_applied": { "enum": ["priority", "first-claim", "preempt", "partition", "serialize"] },
+    "winner": { "type": "string" },
+    "loser_action": { "enum": ["requeued", "reassigned", "waited", "halted"] },
+    "approval_token": { "type": ["string", "null"] },
+    "force_release": { "type": "boolean" },
+    "integrity_verified": { "type": "boolean" },
+    "ast_risk_id": { "const": "AST06" }
+  },
+  "required": ["record_id", "conflict_id", "timestamp", "agents_involved", "contested_file", "strategy_applied", "ast_risk_id"]
+}
+```
+
+```yaml
+# AST06 -- Immutable audit trail for all conflict resolutions
+resolver:
+  config:
+    audit_trail:
+      enabled: true                           # AST06: mandatory in production
+      storage: .cortivex/mesh/audit/
+      format: jsonl                           # append-only JSON lines
+      include_fields:
+        - conflict_id
+        - timestamp
+        - agents_involved
+        - contested_file
+        - strategy_applied
+        - winner
+        - approval_token
+        - force_release
+        - integrity_verified
+      retention_days: 90
+      immutable: true                         # AST06: no modification or deletion
+      sign_records: true                      # ed25519 signature on each record
+      signature_key_path: /etc/cortivex/keys/audit.key
+```
+
+Query the audit trail through the MCP tool:
+
+```
+cortivex_mesh_resolver({
+  action: "audit_query",
+  run_id: "ctx-d4e5f6",
+  filters: {
+    "force_release": true,
+    "time_range": { "from": "2025-01-15T00:00:00Z", "to": "2025-01-16T00:00:00Z" }
+  }
+})
+```

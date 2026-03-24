@@ -649,3 +649,269 @@ const prReviewRegression: RegressionRuleConfig = {
   on_failure: { notify: ["slack:#agent-alerts"], block_deploy: true, auto_bisect: true }
 };
 ```
+
+## Security Hardening (OWASP AST10 Aligned)
+
+This section defines security controls for agent replay operations, aligned with the OWASP Automated Security Testing (AST) risk taxonomy. Each subsection maps to a specific AST risk ID and provides enforceable configuration, validation schemas, and MCP tool integration examples.
+
+### AST09: Trace Data Encryption at Rest
+
+All persisted trace files contain agent reasoning chains, tool call arguments, and tool responses that may include source code, secrets, or sensitive business logic. Per **AST09** (Sensitive Data Exposure in Test Artifacts), traces must be encrypted at rest using AES-256-GCM.
+
+```yaml
+# .cortivex/security/trace-encryption.yaml
+trace_encryption:
+  enabled: true
+  algorithm: AES-256-GCM
+  key_derivation:
+    method: PBKDF2-HMAC-SHA512
+    iterations: 600000
+    salt_length_bytes: 32
+  key_management:
+    provider: vault                      # vault | aws-kms | gcp-kms | local-keyring
+    key_id: cortivex/trace-encryption-key
+    rotation_interval_days: 90
+    auto_rotate: true
+  scope:
+    encrypt_reasoning: true              # chain-of-thought steps
+    encrypt_tool_responses: true         # full tool output payloads
+    encrypt_metadata: false              # run_id, timestamps, cost (non-sensitive)
+  storage:
+    encrypted_extension: .trace.enc
+    plaintext_traces_allowed: false      # reject writes of unencrypted traces
+    migration:
+      encrypt_existing: true             # encrypt pre-existing plaintext traces
+      delete_plaintext_after: true       # remove originals after encryption
+```
+
+MCP tool call to verify encryption status of a trace (AST09 compliance check):
+
+```
+cortivex_replay({
+  action: "inspect_security",
+  trace_id: "trace-7f3a",
+  checks: ["encryption_at_rest", "key_rotation_status"]
+})
+```
+
+```json
+{
+  "trace_id": "trace-7f3a",
+  "encryption": {
+    "encrypted": true,
+    "algorithm": "AES-256-GCM",
+    "key_id": "cortivex/trace-encryption-key",
+    "key_last_rotated": "2026-01-15T00:00:00Z",
+    "ast_risk_id": "AST09",
+    "compliant": true
+  }
+}
+```
+
+### Sensitive Data Redaction in Traces
+
+Traces capture tool call arguments and responses verbatim, which may contain secrets, API keys, or PII. The redaction engine auto-strips sensitive values before they are written to disk, ensuring that even encrypted traces do not retain raw secrets. This control supplements AST09 by applying defense-in-depth.
+
+```yaml
+# .cortivex/security/trace-redaction.yaml
+trace_redaction:
+  enabled: true
+  redaction_marker: "[REDACTED:{{category}}]"
+  categories:
+    secrets:
+      patterns:
+        - "(sk-[a-zA-Z0-9]{32,})"                    # OpenAI-style keys
+        - "(ghp_[a-zA-Z0-9]{36})"                     # GitHub PATs
+        - "(AKIA[0-9A-Z]{16})"                        # AWS access keys
+        - "(?i)(bearer\\s+[a-zA-Z0-9\\-._~+/]+=*)"   # Bearer tokens
+      action: replace
+    api_keys:
+      patterns:
+        - "(?i)(api[_-]?key\\s*[:=]\\s*[\"']?)[^\"'\\s]+"
+        - "(?i)(authorization\\s*[:=]\\s*[\"']?)[^\"'\\s]+"
+      action: replace
+    pii:
+      patterns:
+        - "(\\b[A-Z][a-z]+\\s[A-Z][a-z]+\\b)"        # full names (heuristic)
+        - "(\\b\\d{3}-\\d{2}-\\d{4}\\b)"              # SSN format
+        - "(\\b[\\w.+-]+@[\\w-]+\\.[\\w.-]+\\b)"      # email addresses
+      action: hash_and_replace
+      hash_algorithm: SHA-256
+  enforcement:
+    block_unredacted_write: true         # reject trace writes with detected secrets
+    scan_on_export: true                 # re-scan before export (AST09 defense-in-depth)
+    audit_log: true                      # log all redaction events
+```
+
+```typescript
+interface TraceRedactionResult {
+  trace_id: string;
+  redactions_applied: number;
+  categories_hit: Array<"secrets" | "api_keys" | "pii">;
+  blocked: boolean;                      // true if block_unredacted_write triggered
+  ast_risk_id: "AST09";
+}
+```
+
+### Replay Authorization Controls
+
+Modified replay can alter agent behavior by substituting models, prompts, or inputs. Per **AST09**, replays that change execution parameters require elevated permissions to prevent unauthorized experimentation with production traces.
+
+```json
+{
+  "$schema": "https://cortivex.dev/schemas/replay-authorization/v1.json",
+  "title": "ReplayAuthorizationPolicy",
+  "type": "object",
+  "required": ["policy_id", "rules"],
+  "properties": {
+    "policy_id": { "type": "string", "pattern": "^rpol-[a-z0-9-]+$" },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["replay_mode", "required_role", "ast_risk_id"],
+        "properties": {
+          "replay_mode": { "enum": ["full", "selective", "modified"] },
+          "required_role": { "enum": ["viewer", "operator", "admin", "security-lead"] },
+          "require_mfa": { "type": "boolean", "default": false },
+          "require_approval": { "type": "boolean", "default": false },
+          "approval_count": { "type": "integer", "minimum": 1 },
+          "ast_risk_id": { "type": "string" }
+        }
+      }
+    }
+  }
+}
+```
+
+```yaml
+# Enforced replay authorization policy
+replay_authorization:
+  policy_id: rpol-production-traces
+  rules:
+    - replay_mode: full
+      required_role: operator
+      require_mfa: false
+      ast_risk_id: AST09
+    - replay_mode: selective
+      required_role: operator
+      require_mfa: false
+      ast_risk_id: AST09
+    - replay_mode: modified
+      required_role: admin
+      require_mfa: true
+      require_approval: true
+      approval_count: 1
+      ast_risk_id: AST09
+```
+
+### Trace Export Controls
+
+Exporting traces moves sensitive execution data outside the Cortivex security boundary. Per **AST09**, restricted traces (those containing redacted secrets or flagged PII) require explicit approval before export.
+
+```yaml
+# .cortivex/security/trace-export-controls.yaml
+trace_export:
+  default_policy: allow
+  restricted_traces:
+    policy: require_approval
+    approval_roles: [security-lead, admin]
+    approval_count: 1
+    max_export_age_days: 30              # cannot export traces older than this
+    ast_risk_id: AST09
+  restrictions:
+    - condition: "trace.redaction_count > 0"
+      policy: require_approval
+      reason: "Trace contained redacted sensitive data"
+    - condition: "trace.classification == 'confidential'"
+      policy: deny
+      reason: "Confidential traces cannot be exported"
+  audit:
+    log_all_exports: true
+    log_denied_exports: true
+    include_requester_identity: true
+```
+
+```
+cortivex_replay({
+  action: "export",
+  trace_ids: ["trace-7f3a"],
+  format: "json",
+  security: {
+    approval_token: "appr-9c2d1e",
+    requester: "eng-lead@example.com",
+    justification: "Regression investigation for Q1 pipeline failure"
+  }
+})
+```
+
+```json
+{
+  "export_id": "exp-4f8a",
+  "trace_ids": ["trace-7f3a"],
+  "status": "approved",
+  "approval_token": "appr-9c2d1e",
+  "ast_risk_id": "AST09",
+  "audit_entry": "Export approved by security-lead@example.com at 2026-03-24T10:15:00Z"
+}
+```
+
+### Remote Attach Authentication Enforcement
+
+Remote attach mode connects external debuggers to running or recorded replay sessions. Per **AST09**, token-only authentication is insufficient for remote attach because bearer tokens can be exfiltrated from logs or environment variables. All remote attach connections must use mTLS or OIDC.
+
+```yaml
+# .cortivex/security/remote-attach-auth.yaml
+remote_attach_authentication:
+  allowed_methods:
+    - mtls
+    - oidc
+  explicitly_denied_methods:
+    - token                               # AST09: bearer tokens are insufficient
+    - basic                               # AST09: basic auth transmits credentials
+  mtls_config:
+    ca_bundle: /etc/cortivex/ca-chain.pem
+    client_cert_required: true
+    min_tls_version: "1.3"
+    allowed_cipher_suites:
+      - TLS_AES_256_GCM_SHA384
+      - TLS_CHACHA20_POLY1305_SHA256
+    certificate_revocation_check: true
+    cert_expiry_warning_days: 30
+  oidc_config:
+    issuer: https://auth.example.com
+    audience: cortivex-replay-remote
+    required_claims:
+      - sub
+      - email
+      - "cortivex:role"
+    role_claim: "cortivex:role"
+    min_required_role: operator
+    token_max_age_seconds: 3600
+  session_controls:
+    max_session_duration_minutes: 60
+    idle_timeout_minutes: 15
+    max_concurrent_sessions: 3
+    require_re_auth_for_write: true       # read-only sessions can attach; write requires re-auth
+  audit:
+    log_all_connections: true
+    log_auth_failures: true
+    alert_on_denied_method: true          # alert when token/basic auth is attempted
+    ast_risk_id: AST09
+```
+
+```typescript
+interface RemoteAttachSecurityCheck {
+  connection_id: string;
+  auth_method: "mtls" | "oidc";
+  client_identity: string;
+  role: string;
+  tls_version: string;
+  session_start: string;                 // ISO 8601
+  session_max_expiry: string;            // ISO 8601
+  read_only: boolean;
+  ast_risk_id: "AST09";
+  compliant: boolean;
+  denied_reason?: string;                // populated when compliant is false
+}
+```

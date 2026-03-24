@@ -587,3 +587,346 @@ const exportResult = await cortivex_knowledge({
 // exportResult.node_count: 34
 // exportResult.edge_count: 61
 ```
+
+## Security Hardening (OWASP AST10 Aligned)
+
+This section defines security controls for the knowledge graph layer, mapped to the OWASP Agentic Security Threats (AST) taxonomy. These controls protect against data leakage, cross-run contamination, and uncontrolled retention of sensitive information within CRDT knowledge graphs.
+
+### AST09: Data Classification for Knowledge Graph Entries
+
+Every node added to the knowledge graph MUST carry a data classification label. This addresses AST09 (Insufficient Logging and Monitoring) by ensuring that sensitive data is tracked, access-controlled, and auditable throughout its lifecycle in the graph.
+
+```yaml
+# knowledge-classification.yaml — AST09 Data Classification
+data_classification:
+  ast09_compliance: true
+  enforce_on_add: true  # reject nodes without a classification label
+  default_classification: "internal"  # fallback if agent omits label
+
+  levels:
+    - name: "public"
+      description: "Non-sensitive findings safe for external reports"
+      access: "all_agents"
+      export_allowed: true
+      retention_days: 365
+
+    - name: "internal"
+      description: "Standard findings for pipeline-internal use"
+      access: "pipeline_agents_only"
+      export_allowed: true
+      export_requires_approval: false
+      retention_days: 90
+
+    - name: "restricted"
+      description: "Sensitive findings containing secrets, PII, or security vulnerabilities"
+      access: "originating_agent_and_coordinator"
+      export_allowed: false
+      export_requires_approval: true
+      retention_days: 30
+      redact_in_synthesis: true  # replace with placeholder in synthesized reports
+      audit_all_access: true     # AST09: log every read of restricted nodes
+
+  classification_rules:
+    - match:
+        metadata_contains: ["password", "secret", "token", "api_key", "credential"]
+      auto_classify: "restricted"
+    - match:
+        metadata_contains: ["ssn", "social_security", "credit_card", "pii"]
+      auto_classify: "restricted"
+    - match:
+        severity: ["critical", "high"]
+        type: "finding"
+      auto_classify: "internal"
+    - match:
+        type: "concept"
+      auto_classify: "public"
+```
+
+Apply classification when adding nodes via MCP:
+
+```json
+{
+  "tool": "cortivex_knowledge",
+  "request": {
+    "action": "add",
+    "graph_id": "review-session-1",
+    "nodes": [
+      {
+        "type": "finding",
+        "label": "Hardcoded API key in config.ts",
+        "classification": "restricted",
+        "metadata": {
+          "file": "src/config.ts",
+          "line": 12,
+          "severity": "critical",
+          "agent": "agent-security-scanner-1"
+        }
+      }
+    ],
+    "ast_risk_id": "AST09",
+    "enforce_classification": true
+  }
+}
+```
+
+### Export Controls with Approval Workflow
+
+Knowledge graph exports MUST enforce classification-based access controls. Exporting restricted data to external formats (JSON, GraphML, d3-force) requires explicit approval from the pipeline coordinator. This prevents unauthorized data exfiltration from the knowledge graph.
+
+```json
+{
+  "$schema": "https://cortivex.dev/schemas/export-controls/v1.json",
+  "type": "object",
+  "required": ["export_policy"],
+  "properties": {
+    "export_policy": {
+      "type": "object",
+      "properties": {
+        "public_data": {
+          "type": "object",
+          "properties": {
+            "allowed_formats": { "type": "array", "items": { "type": "string" } },
+            "require_approval": { "type": "boolean", "default": false },
+            "auto_redact_restricted": { "type": "boolean", "default": true }
+          }
+        },
+        "internal_data": {
+          "type": "object",
+          "properties": {
+            "allowed_formats": { "type": "array", "items": { "type": "string" } },
+            "require_approval": { "type": "boolean", "default": false },
+            "strip_agent_ids": { "type": "boolean", "default": false }
+          }
+        },
+        "restricted_data": {
+          "type": "object",
+          "properties": {
+            "allowed_formats": { "type": "array", "items": { "type": "string" } },
+            "require_approval": { "type": "boolean", "default": true },
+            "approval_roles": {
+              "type": "array",
+              "items": { "type": "string" },
+              "default": ["coordinator", "pipeline_owner"]
+            },
+            "audit_export": { "type": "boolean", "default": true }
+          }
+        },
+        "blocked_destinations": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Paths or URLs where exports are never allowed"
+        }
+      }
+    }
+  }
+}
+```
+
+Request an approved export via MCP:
+
+```json
+{
+  "tool": "cortivex_knowledge",
+  "request": {
+    "action": "export",
+    "graph_id": "review-session-1",
+    "format": "json",
+    "include_restricted": true,
+    "approval_token": "approval-tx-5f3e2d1c",
+    "ast_risk_id": "AST09",
+    "audit_export": true
+  }
+}
+```
+
+### PII and Secret Filtering Before Graph Persistence
+
+Before any knowledge node is persisted to disk, a filtering pass MUST scan for PII and secrets. Nodes containing detected sensitive content are either redacted, reclassified as restricted, or rejected entirely. This prevents secrets from leaking into persisted graph storage.
+
+```yaml
+# pii-secret-filter.yaml
+pii_secret_filter:
+  enabled: true
+  apply_on: ["persist", "export", "synthesize"]
+
+  secret_patterns:
+    - name: api_key_generic
+      pattern: "(?i)(api[_-]?key|apikey)\\s*[:=]\\s*['\"]?[a-zA-Z0-9_\\-]{20,}"
+      action: redact
+    - name: private_key_pem
+      pattern: "-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----"
+      action: reject
+    - name: github_token
+      pattern: "gh[ps]_[a-zA-Z0-9]{36,}"
+      action: redact
+    - name: aws_access_key
+      pattern: "AKIA[0-9A-Z]{16}"
+      action: redact
+    - name: jwt_token
+      pattern: "eyJ[a-zA-Z0-9_-]{10,}\\.eyJ[a-zA-Z0-9_-]{10,}\\.[a-zA-Z0-9_-]+"
+      action: redact
+
+  pii_patterns:
+    - name: email_address
+      pattern: "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"
+      action: hash_and_classify_restricted
+    - name: phone_number
+      pattern: "\\+?[1-9]\\d{1,14}"
+      action: hash_and_classify_restricted
+    - name: ssn
+      pattern: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+      action: reject  # never persist SSNs
+
+  redaction_config:
+    replacement: "[REDACTED:{pattern_name}]"
+    preserve_metadata: true  # keep file, line, severity — only redact the sensitive value
+    log_redactions: true     # AST09: audit every redaction event
+```
+
+Trigger a manual filter scan on an existing graph:
+
+```json
+{
+  "tool": "cortivex_knowledge",
+  "request": {
+    "action": "scan_and_filter",
+    "graph_id": "review-session-1",
+    "filter_config": "pii-secret-filter.yaml",
+    "dry_run": false,
+    "ast_risk_id": "AST09"
+  }
+}
+```
+
+### Graph Isolation Between Pipeline Runs
+
+Knowledge graphs MUST be isolated between pipeline runs to prevent cross-contamination. A graph from pipeline run A must never be readable or writable by pipeline run B unless explicitly linked through a controlled inheritance mechanism. This prevents data leakage across security boundaries.
+
+```yaml
+# graph-isolation.yaml
+graph_isolation:
+  policy: strict  # strict | shared | inherited
+  enforce_run_boundary: true
+
+  strict_mode:
+    graph_id_includes_run_id: true  # graph_id = "{user_graph_id}-{run_id}"
+    cross_run_read: deny
+    cross_run_write: deny
+    storage_path_isolation: true    # each run gets its own subdirectory
+    cleanup_on_pipeline_end: true
+
+  inherited_mode:
+    # Only used when policy is "inherited" — allows controlled read from parent
+    allow_read_from_parent: true
+    allow_write_to_parent: false
+    parent_run_id: null             # must be explicitly set
+    inherit_classification_labels: true
+    inherit_restricted_nodes: false  # never inherit restricted data
+
+  enforcement:
+    reject_cross_run_queries: true
+    audit_cross_run_attempts: true  # AST09: log any attempt to access another run's graph
+    on_violation: "deny_and_log"
+```
+
+Verify isolation at pipeline start:
+
+```typescript
+interface GraphIsolationCheck {
+  tool: "cortivex_knowledge";
+  request: {
+    action: "verify_isolation";
+    graph_id: string;
+    run_id: string;
+    expected_policy: "strict" | "shared" | "inherited";
+    reject_if_contaminated: boolean;  // abort if graph has data from other runs
+    ast_risk_ids: ["AST09"];
+  };
+}
+```
+
+```json
+{
+  "tool": "cortivex_knowledge",
+  "request": {
+    "action": "verify_isolation",
+    "graph_id": "review-session-1",
+    "run_id": "ctx-a1b2c3",
+    "expected_policy": "strict",
+    "reject_if_contaminated": true,
+    "ast_risk_ids": ["AST09"]
+  }
+}
+```
+
+### Temporal Data Retention with Mandatory Expiry
+
+All knowledge graph data MUST have a mandatory expiry policy. Graphs that exceed their retention period are automatically purged. No indefinite retention is permitted for graphs containing internal or restricted data. This limits the blast radius of any data breach involving persisted graph storage.
+
+```yaml
+# retention-policy.yaml
+temporal_retention:
+  enabled: true
+  enforce_mandatory_expiry: true
+
+  policies:
+    - classification: "public"
+      max_retention_days: 365
+      auto_purge: true
+      archive_before_purge: true
+      archive_format: "compressed_jsonl"
+
+    - classification: "internal"
+      max_retention_days: 90
+      auto_purge: true
+      archive_before_purge: false
+      warn_before_purge_days: 7
+
+    - classification: "restricted"
+      max_retention_days: 30
+      auto_purge: true
+      archive_before_purge: false  # restricted data is never archived
+      secure_delete: true          # overwrite storage, not just unlink
+      warn_before_purge_days: 3
+
+  graph_level_expiry:
+    max_graph_age_days: 180        # absolute maximum regardless of classification
+    max_graph_size_nodes: 50000    # force purge if graph exceeds size limit
+    idle_expiry_days: 30           # purge if no reads or writes for 30 days
+
+  audit:
+    log_all_purges: true           # AST09: audit every purge event
+    log_retention_overrides: true  # log if anyone extends retention
+    retention_override_requires: "pipeline_owner"
+```
+
+Check retention status and upcoming expirations:
+
+```json
+{
+  "tool": "cortivex_knowledge",
+  "request": {
+    "action": "retention_status",
+    "graph_id": "review-session-1",
+    "include_expiring_soon": true,
+    "expiry_horizon_days": 7,
+    "ast_risk_id": "AST09"
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "graph_id": "review-session-1",
+  "created_at": "2026-03-10T08:00:00Z",
+  "last_accessed_at": "2026-03-24T14:30:00Z",
+  "retention_policy": "internal",
+  "expires_at": "2026-06-08T08:00:00Z",
+  "nodes_expiring_within_7_days": 3,
+  "restricted_nodes_count": 5,
+  "restricted_earliest_expiry": "2026-04-09T08:00:00Z",
+  "purge_scheduled": false,
+  "ast_risk_id": "AST09"
+}

@@ -705,3 +705,298 @@ const noDirectDbImports: DriftRule = {
   remediation_hint: "Move database access through src/dal/ modules. Direct driver imports outside the DAL violate the architecture boundary.",
 };
 ```
+
+## Security Hardening (OWASP AST10 Aligned)
+
+This section defines security controls for Cortivex drift detection operations, aligned with the OWASP Agentic Security Top 10 risk framework. Each subsection references the specific AST risk ID it mitigates.
+
+### AST03: Remediation Approval Gates
+
+Automated remediation must never apply changes to the codebase without explicit human or coordinator review. The `apply` mode requires a prior `preview` step and an approval token, preventing drift remediation from silently altering production code (AST03).
+
+```yaml
+# AST03 -- No auto-apply without review and approval
+drift_detector:
+  type: DriftDetector
+  config:
+    remediation:
+      require_preview_before_apply: true       # AST03: must preview before applying
+      require_approval_token: true             # AST03: gated by explicit authorization
+      approval_sources:
+        - coordinator
+        - admin
+      auto_apply: false                        # AST03: never auto-apply by default
+      max_auto_remediate_items: 0              # AST03: zero items can bypass review
+      on_unapproved_apply: reject_and_alert
+      audit:
+        log_all_remediation_requests: true
+        log_approvals_and_rejections: true
+        alert_on_bypass_attempt: true
+```
+
+```json
+{
+  "$schema": "https://cortivex.io/schemas/remediation-approval.json",
+  "type": "object",
+  "properties": {
+    "operation_id": { "type": "string", "pattern": "^rem-[a-f0-9]{4,8}$" },
+    "scan_id": { "type": "string" },
+    "action": { "enum": ["preview", "apply", "rollback"] },
+    "approval_token": { "type": ["string", "null"] },
+    "approved_by": { "type": "string" },
+    "items_reviewed": { "type": "integer", "minimum": 0 },
+    "items_approved": { "type": "integer", "minimum": 0 },
+    "preview_completed": { "type": "boolean" },
+    "ast_risk_id": { "const": "AST03" }
+  },
+  "required": ["operation_id", "scan_id", "action", "preview_completed", "ast_risk_id"]
+}
+```
+
+MCP tool invocation with approval gate:
+
+```
+cortivex_drift_remediate({
+  action: "apply",
+  repo: "/path/to/repo",
+  scan_id: "drift-8f2a",
+  category: "config",
+  item_ids: ["cfg-001", "cfg-003"],
+  approval_token: "apr-admin-4d7f",
+  preview_confirmed: true
+})
+```
+
+### Scan Scope Restrictions
+
+Drift scans must exclude sensitive directories by default to prevent accidental exposure of secrets, credentials, or private keys. The default exclusion list is enforced and can only be reduced by an administrator (AST03).
+
+```yaml
+# AST03 -- Restrict scan scope to prevent sensitive data exposure
+drift_detector:
+  config:
+    scan_scope:
+      default_exclude:                         # AST03: always excluded unless admin override
+        - "**/.env"
+        - "**/.env.*"
+        - "**/secrets/"
+        - "**/credentials/"
+        - "**/*.pem"
+        - "**/*.key"
+        - "**/*.p12"
+        - "**/private/"
+        - "**/.ssh/"
+        - "**/.aws/"
+        - "**/.gcp/"
+        - "**/node_modules/"
+        - "**/dist/"
+        - "**/build/"
+      enforce_default_exclude: true            # AST03: cannot remove defaults without admin
+      admin_override_required_for:
+        - removing_default_exclusions
+        - scanning_dotenv_files
+        - scanning_credential_directories
+      max_scan_depth: 15                       # prevent unbounded directory traversal
+      max_files_per_scan: 50000                # cap to prevent resource exhaustion
+```
+
+```typescript
+import { DriftScanner } from "@cortivex/drift";
+
+// AST03: Scanner enforces exclusion policy at construction
+const scanner = new DriftScanner({
+  repo: "/path/to/repo",
+  scopePolicy: {
+    enforceDefaultExclusions: true,
+    additionalExclusions: ["**/vendor/", "**/tmp/"],
+    maxScanDepth: 15,
+    maxFilesPerScan: 50000,
+    onExclusionViolation: (path: string) => {
+      scanner.reportSecurityEvent({
+        event: "scope_exclusion_violation",
+        path,
+        astRiskId: "AST03",
+      });
+    },
+  },
+});
+```
+
+### Baseline Integrity Verification
+
+Baselines represent the trusted intended state of the codebase. To prevent tampering, each baseline snapshot is hash-signed at creation time. Before any scan comparison, the baseline signature is verified to ensure it has not been modified (AST03).
+
+```json
+{
+  "$schema": "https://cortivex.io/schemas/baseline-integrity.json",
+  "type": "object",
+  "properties": {
+    "baseline_id": { "type": "string", "pattern": "^bl-[a-f0-9]{4,8}$" },
+    "content_hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "signature": { "type": "string" },
+    "signature_scheme": { "const": "ed25519" },
+    "signed_by": { "type": "string" },
+    "signed_at": { "type": "string", "format": "date-time" },
+    "verification_status": { "enum": ["verified", "failed", "not_checked"] },
+    "ast_risk_id": { "const": "AST03" }
+  },
+  "required": ["baseline_id", "content_hash", "signature", "signature_scheme", "signed_at", "ast_risk_id"]
+}
+```
+
+```yaml
+# AST03 -- Hash-signed baselines to prevent tampering
+drift_detector:
+  config:
+    baseline_integrity:
+      sign_on_create: true                     # AST03: sign every new baseline
+      signature_scheme: ed25519
+      signing_key_path: /etc/cortivex/keys/drift-baseline.key
+      verification_key_path: /etc/cortivex/keys/drift-baseline.pub
+      verify_before_scan: true                 # AST03: always verify before comparison
+      on_verification_failure: halt_and_alert  # never scan against tampered baselines
+      hash_algorithm: sha256
+      include_in_hash:
+        - snapshot_data
+        - category_weights
+        - severity_multipliers
+```
+
+MCP tool to verify baseline integrity on demand:
+
+```
+cortivex_drift({
+  action: "verify_baseline",
+  baseline_id: "bl-3d7e",
+  checks: ["signature_valid", "content_hash_match", "no_modification_since_signing"]
+})
+```
+
+### Alert Channel Authentication
+
+Drift alerts must be delivered only to authenticated channels. Unauthenticated alert delivery creates an injection vector where an attacker could send fake drift alerts to mislead operators or suppress genuine alerts (AST03).
+
+```yaml
+# AST03 -- Authenticate all alert delivery channels
+drift_detector:
+  config:
+    alerting:
+      channels:
+        - name: pipeline-alerts
+          type: webhook
+          url: https://hooks.internal.corp/cortivex-alerts
+          authentication:
+            method: hmac-sha256                # AST03: sign alert payloads
+            secret_env_var: ALERT_WEBHOOK_SECRET
+          tls_required: true                   # AST03: no plaintext alert delivery
+          verify_tls_certificate: true
+        - name: ops-slack
+          type: slack
+          channel_id: C04XXXXXX
+          authentication:
+            method: oauth2
+            token_env_var: SLACK_BOT_TOKEN
+      delivery_policy:
+        require_authenticated_channel: true    # AST03: reject unauthenticated channels
+        require_tls: true
+        sign_alert_payloads: true
+        on_delivery_failure: retry_then_log
+        max_retries: 3
+        alert_on_channel_auth_failure: true   # meta-alert: channel itself is compromised
+```
+
+```json
+{
+  "$schema": "https://cortivex.io/schemas/drift-alert-envelope.json",
+  "type": "object",
+  "properties": {
+    "alert_id": { "type": "string", "pattern": "^alert-[a-f0-9]{8}$" },
+    "scan_id": { "type": "string" },
+    "composite_score": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "breached_threshold": { "type": "integer" },
+    "channel": { "type": "string" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "payload_signature": { "type": "string" },
+    "signature_scheme": { "const": "hmac-sha256" },
+    "ast_risk_id": { "const": "AST03" }
+  },
+  "required": ["alert_id", "scan_id", "composite_score", "channel", "timestamp", "payload_signature", "ast_risk_id"]
+}
+```
+
+### Drift Rule Validation
+
+Custom drift rules can define remediation actions that execute arbitrary changes. Rules with dangerous remediation patterns (file deletion, permission changes, external command execution) must be rejected at load time (AST03).
+
+```yaml
+# AST03 -- Validate custom rules to block dangerous remediation actions
+drift_detector:
+  config:
+    rule_validation:
+      enabled: true                            # AST03: validate all rules before loading
+      blocked_remediation_patterns:
+        - "rm -rf"
+        - "chmod"
+        - "chown"
+        - "curl"
+        - "wget"
+        - "eval("
+        - "exec("
+        - "sudo"
+        - "del /f"
+        - "> /dev/"
+      blocked_target_paths:
+        - "/etc/"
+        - "/usr/"
+        - "/var/"
+        - "C:\\Windows\\"
+        - "~/.ssh/"
+      max_remediation_scope_files: 20          # AST03: cap blast radius per rule
+      require_rule_signature: true             # AST03: only load signed rules
+      signature_verification_key: /etc/cortivex/keys/rule-signing.pub
+      on_validation_failure: reject_and_alert
+```
+
+```typescript
+import { DriftRuleValidator } from "@cortivex/drift";
+
+// AST03: Validate rules before registration
+const validator = new DriftRuleValidator({
+  blockedPatterns: [
+    /rm\s+-rf/,
+    /chmod/,
+    /eval\s*\(/,
+    /exec\s*\(/,
+    /curl|wget/,
+    /sudo/,
+  ],
+  blockedTargetPaths: ["/etc/", "/usr/", "/var/"],
+  maxRemediationScopeFiles: 20,
+  requireSignature: true,
+  verificationKeyPath: "/etc/cortivex/keys/rule-signing.pub",
+});
+
+const result = validator.validate(candidateRule);
+if (!result.valid) {
+  validator.reportSecurityEvent({
+    event: "dangerous_rule_rejected",
+    ruleId: candidateRule.rule_id,
+    violations: result.violations,   // e.g., ["blocked pattern: rm -rf"]
+    astRiskId: "AST03",
+  });
+}
+```
+
+MCP tool to audit loaded rules:
+
+```
+cortivex_drift({
+  action: "audit_rules",
+  checks: [
+    "no_blocked_remediation_patterns",
+    "all_rules_signed",
+    "scope_within_limits",
+    "no_blocked_target_paths"
+  ]
+})
+```

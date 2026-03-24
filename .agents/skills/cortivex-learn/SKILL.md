@@ -644,3 +644,152 @@ const confidenceConfig: ConfidenceThresholdConfig = {
 ```
 
 The calibration subsystem periodically checks whether confidence scores align with actual outcomes using the Brier score, adjusting scoring formula weights when the target is exceeded.
+
+## Security Hardening (OWASP AST10 Aligned)
+
+Security controls for the learning system aligned with the OWASP Automated Security Testing Top 10 risk framework.
+
+### AST03: Security Node Skip Prevention
+
+The `skip_node` insight type must never target security-critical nodes. `SecurityScanner` cannot be auto-skipped regardless of confidence score.
+
+```yaml
+security_node_protection:
+  # AST03 -- Prevent skip recommendations on security-critical nodes
+  protected_node_types: [SecurityScanner, DependencyAuditor, SecretDetector, LicenseChecker]
+  enforcement: hard_block
+  override_allowed: false
+  behavior_on_skip_attempt:
+    action: reject_and_log
+    log_level: warn
+    message: "AST03 violation: skip_node targeting protected node '{node_type}' blocked"
+```
+
+```json
+{
+  "tool": "cortivex_insights",
+  "request": { "action": "apply", "insight_id": "ins-skip-sec", "repo": "/path/to/repo" },
+  "response": {
+    "status": "rejected",
+    "reason": "AST03: SecurityScanner is a protected node type and cannot be skipped",
+    "insight_type": "skip_node", "target_node": "SecurityScanner", "confidence": 0.94
+  }
+}
+```
+
+### AST03: Model Downgrade Protection
+
+Security-critical nodes are locked to a minimum model tier. The `substitute_model` insight must not downgrade a protected node below its floor.
+
+```yaml
+model_tier_policy:
+  # AST03 -- Model floor for security-critical nodes
+  minimum_model_tiers:
+    SecurityScanner: { min_tier: sonnet, allowed: [claude-sonnet-4-20250514, claude-opus-4-20250514], enforcement: hard_block }
+    DependencyAuditor: { min_tier: sonnet, allowed: [claude-sonnet-4-20250514, claude-opus-4-20250514], enforcement: hard_block }
+  audit: { log_downgrade_attempts: true, alert_on_repeated_attempts: 3 }
+```
+
+```json
+{
+  "title": "ModelDowngradeValidation", "type": "object",
+  "required": ["node_type", "requested_model", "allowed", "ast_reference"],
+  "properties": {
+    "node_type": { "type": "string" }, "requested_model": { "type": "string" },
+    "allowed": { "type": "boolean" }, "ast_reference": { "type": "string", "const": "AST03" },
+    "minimum_tier": { "type": "string", "enum": ["haiku", "sonnet", "opus"] }
+  }
+}
+```
+
+### Insight Poisoning Detection
+
+Anomalous insight patterns trigger quarantine and review. Monitors for statistical outliers that could indicate data poisoning.
+
+```yaml
+insight_poisoning_detection:
+  enabled: true
+  anomaly_triggers:
+    - type: sudden_confidence_spike
+      threshold: { min_delta: 0.35, max_observations: 3 }
+      action: quarantine_and_review
+    - type: contradictory_burst
+      threshold: { max_contradictions: 3, window_minutes: 30 }
+      action: freeze_insight_recording
+    - type: skip_targeting  # AST03
+      threshold: { max_attempts: 2, window_hours: 24 }
+      action: alert_and_block
+    - type: mass_downgrade
+      threshold: { min_batch_size: 5, downgrade_percentage: 0.80 }
+      action: quarantine_and_review
+  quarantine: { duration_hours: 48, requires_manual_review: true, notify: [security-ops] }
+```
+
+```json
+{
+  "tool": "cortivex_insights",
+  "request": { "action": "record", "repo": "/path/to/repo", "insight": { "type": "skip_node", "node": "SecurityScanner" } },
+  "response": {
+    "status": "quarantined", "reason": "Insight poisoning: skip_targeting triggered (AST03)",
+    "quarantine_id": "q-8f3a1b", "review_required": true
+  }
+}
+```
+
+### A/B Test Safety Constraints
+
+Security-critical nodes must appear identically configured in both control and all variant groups.
+
+```yaml
+ab_test_safety:
+  invariant_nodes:
+    - { node_type: SecurityScanner, must_be_present: true, config_must_match: true, model_must_match: true }
+    - { node_type: DependencyAuditor, must_be_present: true, config_must_match: true }
+  validation_rules:
+    - { rule: no_security_node_removal, ast_reference: "AST03", enforcement: pre_experiment_gate }
+    - { rule: no_security_model_variance, enforcement: pre_experiment_gate }
+    - { rule: no_security_config_variance, enforcement: pre_experiment_gate }
+  on_violation: { action: reject_experiment, message: "Experiment '{experiment_id}' violates A/B safety: {rule}" }
+```
+
+```typescript
+interface ABTestSecurityValidation {
+  experiment_id: string;
+  groups_checked: string[];
+  invariant_nodes_verified: Array<{
+    node_type: string; present_in_all_groups: boolean;
+    config_identical: boolean; model_identical: boolean;
+  }>;
+  validation_passed: boolean;
+  violations: Array<{ rule: string; group: string; node_type: string; ast_reference: string }>;
+}
+```
+
+### Learning Data Isolation Between Repositories
+
+Insight data is partitioned per repository with encrypted storage. Cross-repo access is only allowed through the `cortivex-cross-repo` promotion pipeline which enforces anonymization and privacy checks.
+
+```yaml
+learning_data_isolation:
+  storage: { partition_key: repository_id, encryption: aes-256-gcm, key_derivation: per_repository }
+  access_control:
+    cross_repo_direct_access: denied
+    allowed_cross_repo_path: "cortivex-cross-repo.promote"
+    audit_all_access: true
+  validation:
+    - { check: partition_boundary, enforcement: query_interceptor }
+    - { check: no_repo_id_in_global, enforcement: promotion_pipeline, ast_reference: "AST03" }
+  isolation_breach_response: { action: deny_and_alert, alert_channel: security-ops }
+```
+
+```json
+{
+  "tool": "cortivex_insights",
+  "request": { "action": "query", "repo": "/path/to/other-repo", "caller_repo": "/path/to/my-repo" },
+  "response": {
+    "status": "denied",
+    "reason": "Learning data isolation: caller repo does not match target. Use cortivex_crossrepo({ action: 'import' }) instead.",
+    "caller_repo": "/path/to/my-repo", "target_repo": "/path/to/other-repo"
+  }
+}
+```

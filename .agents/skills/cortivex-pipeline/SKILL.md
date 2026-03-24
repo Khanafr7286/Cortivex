@@ -695,3 +695,118 @@ versioning:
 ```
 
 When `auto_rollback_on` includes `critical_failure`, a failed run reverts the pipeline to the last successful version. The `cost_exceeded` trigger prevents runaway spending by rolling back when actual cost exceeds the threshold multiplier. Use `cortivex rollback <pipeline> <version>` for manual rollback.
+
+## Security Hardening (OWASP AST10 Aligned)
+
+### AST05: Safe YAML Deserialization
+
+Pipeline YAML must be schema-validated before loading (AST05 -- Insecure Output Handling). Use `SAFE_SCHEMA` to disable dangerous constructors (`!!python/object`, `!!js/function`).
+
+```json
+{
+  "title": "CortivexPipelineSchema", "type": "object",
+  "required": ["name", "version", "nodes"], "additionalProperties": false,
+  "properties": {
+    "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$" },
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+(\\.\\d+)?$" },
+    "nodes": {
+      "type": "array", "minItems": 1, "maxItems": 25,
+      "items": {
+        "type": "object", "required": ["id", "type"], "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z_][a-z0-9_]{0,63}$" },
+          "type": { "type": "string" },
+          "depends_on": { "type": "array", "items": { "type": "string" } },
+          "config": { "type": "object" }, "retry": { "type": "object" }
+        }
+      }
+    }
+  }
+}
+```
+
+### AST06: Execution Sandboxing
+
+TestRunner and shell-executing nodes run inside container-isolated sandboxes (AST06 -- Excessive Agency).
+
+```yaml
+sandbox:
+  runtime: container
+  resource_limits: { cpu_cores: 2, memory_mb: 2048, network: none, max_pids: 256, timeout_seconds: 300 }
+  filesystem:
+    read_only_root: true
+    writable_paths: [/tmp, /workspace/output]
+    blocked_paths: [/etc/shadow, /root, /home/*/.ssh, /var/run/docker.sock]
+  capabilities_drop: [NET_RAW, SYS_ADMIN, SYS_PTRACE, MKNOD]
+```
+
+```json
+{ "method": "cortivex_security_validate", "params": { "check": "sandbox_policy", "pipeline": "pr-review-fix", "enforce": true } }
+```
+
+### AST03: Command Allowlists
+
+Shell execution nodes operate under strict allowlists (AST03 -- Excessive Permissions). Arbitrary bash is prohibited in production.
+
+```yaml
+command_policy:
+  mode: allowlist
+  global_blocked: ["rm -rf /", "curl * | bash", "eval", "exec", "> /dev/sd*"]
+  node_allowlists:
+    TestRunner: ["npm test", "npx jest *", "npx vitest *", "pytest *", "cargo test *", "go test ./..."]
+    LintFixer: ["npx eslint * --fix", "npx prettier * --write", "ruff check * --fix"]
+    DependencyUpdater: ["npm install", "npm update *", "npm audit fix"]
+  argument_sanitization:
+    strip_shell_operators: true
+    block_path_traversal: true
+    max_argument_length: 1024
+```
+
+```json
+{ "method": "cortivex_command_validate", "params": { "node_type": "TestRunner", "command": "npm test -- --coverage", "policy_file": ".cortivex/security/command-allowlist.yaml" } }
+```
+
+### Cost Gates with Automatic Termination
+
+Cost gates enforce hard budget limits with automatic pipeline termination on breach (related to AST06).
+
+```yaml
+cost_gates:
+  per_node_limits: { default_max_usd: 0.10, overrides: { CodeReviewer: 0.25, RefactorAgent: 0.30 } }
+  per_pipeline_limits: { max_cost_usd: 2.00, warning_threshold_pct: 75, hard_stop_threshold_pct: 100 }
+  per_hour_limits: { max_cost_usd: 10.00, max_pipeline_runs: 20 }
+  actions_on_breach: [terminate_pipeline, log_audit_event]
+  cooldown_after_breach: { duration_minutes: 15, require_manual_override: true }
+```
+
+```typescript
+async function checkCostGate(runId: string): Promise<{
+  action: "continue" | "warn" | "terminate";
+  budget_consumed_pct: number;
+}> {
+  return await mcpCall("cortivex_cost_gate_check", { run_id: runId });
+}
+```
+
+### Dry-Run Enforcement Before Production Execution
+
+Mandatory dry-run validation before production execution of new or modified pipelines prevents accidental runs (AST05, AST06).
+
+```yaml
+execution_policy:
+  dry_run_enforcement:
+    enabled: true
+    require_dry_run_for: [new_pipelines, modified_pipelines, { cost_exceeds_usd: 0.50 }]
+    dry_run_checks: [dag_validation, schema_validation, command_allowlist, cost_estimation, sandbox_availability]
+    dry_run_result_ttl_hours: 24
+```
+
+```json
+{ "method": "cortivex_execution_policy_check", "params": { "pipeline": "my-new-pipeline", "pipeline_hash": "sha256:a1b2c3d4...", "action": "execute" } }
+```
+
+Response when dry-run is required:
+
+```json
+{ "allowed": false, "reason": "Pipeline has not been dry-run validated", "ast_risks": ["AST05", "AST06"], "suggestion": "/cortivex run my-new-pipeline --dry-run" }
+```

@@ -744,4 +744,160 @@ Adaptive thresholds monitor cumulative context growth and automatically adjust c
   ],
   "escalation_sequence": ["lossless", "lossy", "digest"]
 }
+
+## Security Hardening (OWASP AST10 Aligned)
+
+Security controls for context compression aligned with the OWASP Automated Security Testing Top 10 risk framework.
+
+### AST08: Security Finding Preservation
+
+Critical and high severity findings are never compressed below `lossless`. This addresses AST08 (Insufficient Coverage of Security Artifacts).
+
+```yaml
+security_finding_preservation:
+  # AST08 -- Security findings at critical/high severity are never lossy-compressed
+  rules:
+    - { severity: critical, min_compression_level: lossless, override_allowed: false,
+        preserve: [severity, type, file, line, description, recommendation, cwe, cvss_score] }
+    - { severity: high, min_compression_level: lossless, override_allowed: false,
+        preserve: [severity, type, file, line, description, recommendation] }
+    - { severity: medium, min_compression_level: lossy, preserve: [severity, type, file, line] }
+    - { severity: low, min_compression_level: digest }
+  enforcement: compression_interceptor
+  ast_reference: "AST08"
+```
+
+```json
+{
+  "tool": "cortivex_compress",
+  "request": { "action": "compress", "node_id": "security_scan", "level": "digest", "run_id": "ctx-a1b2c3" },
+  "response": {
+    "status": "compressed_with_overrides",
+    "effective_levels": { "critical_findings": "lossless", "high_findings": "lossless", "medium_findings": "lossy", "low_findings": "digest" },
+    "reason": "AST08: Preservation elevated compression for 3 critical and 2 high findings",
+    "original_tokens": 48230, "compressed_tokens": 12400
+  }
+}
+```
+
+### AST08: Data Classification-Aware Compression
+
+Restricted data receives `lossless` only. The engine inspects classification labels before selecting a strategy.
+
+```yaml
+classification_aware_compression:
+  classification_levels:
+    - { level: restricted, allowed_compression: lossless, decompression_requires: caller_authorization, ast_reference: "AST08" }
+    - { level: confidential, allowed_compression: lossless, decompression_requires: caller_authorization }
+    - { level: internal, allowed_compression: lossy }
+    - { level: public, allowed_compression: digest }
+  label_sources: ["_data_classification", "_sensitivity_tags"]
+  default_inference: "SecurityScanner output defaults to 'confidential' if no label present"
+  enforcement: pre_compression_gate
+```
+
+```typescript
+interface ClassificationCompressionPolicy {
+  data_classification: "restricted" | "confidential" | "internal" | "public";
+  max_compression_level: "lossless" | "lossy" | "digest";
+  requires_authorization_for_decompression: boolean;
+  auto_label_rules: Array<{ node_type: string; default_classification: string }>;
+  ast_reference: "AST08";
+}
+```
+
+### Compression Artifact Detection
+
+Post-compression validation detects corruption, schema violations, and semantic drift before the handoff reaches downstream nodes.
+
+```yaml
+compression_artifact_detection:
+  enabled: true
+  checks:
+    - { id: schema_conformance, method: json_schema_validation, fail_action: reject_compressed_output }
+    - { id: field_count_sanity, method: count_comparison, tolerance: 0, fail_action: reject_compressed_output }
+    - { id: semantic_hash_check, method: sha256_per_field, scope: critical_fields_only, fail_action: reject_compressed_output }
+    - { id: encoding_integrity, method: byte_sequence_validation, fail_action: reject_compressed_output }
+    - { id: numeric_drift, method: exact_value_comparison, scope: [cvss_score, line], fail_action: reject_compressed_output }
+  on_artifact_detected: { action: fallback_to_lossless, alert: true, log_level: error }
+```
+
+```json
+{
+  "tool": "cortivex_compress",
+  "request": { "action": "compress", "node_id": "security_scan", "level": "lossy", "run_id": "ctx-d4e5f6" },
+  "response": {
+    "status": "artifact_detected_fallback", "original_level": "lossy", "fallback_level": "lossless",
+    "artifact_details": { "check_id": "semantic_hash_check", "field": "vulnerabilities[2].cvss_score" },
+    "ast_reference": "AST08"
+  }
+}
+```
+
+### Retention Policy Enforcement
+
+Uncompressed sensitive data is wiped after TTL expiry. A background reaper enforces mandatory cleanup.
+
+```yaml
+retention_enforcement:
+  mandatory_cleanup: { enabled: true, enforcement: background_reaper, scan_interval_seconds: 300 }
+  policies:
+    - { classification: restricted, uncompressed_max_ttl: 3600, compressed_max_ttl: 86400, cleanup: secure_wipe, ast_reference: "AST08" }
+    - { classification: confidential, uncompressed_max_ttl: 14400, compressed_max_ttl: 604800, cleanup: secure_wipe }
+    - { classification: internal, uncompressed_max_ttl: 86400, compressed_max_ttl: 2592000, cleanup: standard_delete }
+  overdue_handling: { action: force_delete_and_alert, alert_channel: security-ops, escalation_after_minutes: 30 }
+  audit: { log_all_deletions: true, retention_extension_requires: security_ops_approval }
+```
+
+```json
+{
+  "tool": "cortivex_compress",
+  "request": { "action": "retention_status", "run_id": "ctx-a1b2c3" },
+  "response": {
+    "nodes": [{ "node_id": "security_scan", "classification": "confidential",
+      "uncompressed_status": "expired_and_wiped", "compressed_expires_at": "2026-03-31T10:00:00Z" }],
+    "overdue_items": 0, "ast_reference": "AST08"
+  }
+}
+```
+
+### AST08: Decompression Authorization
+
+Restricted/confidential data rehydration requires verified caller identity and role-based access control.
+
+```yaml
+decompression_authorization:
+  enabled: true
+  authorization_model: role_based
+  rules:
+    - { classification: restricted, roles: [SecurityReviewer, AutoFixer, PipelineAdmin], purpose_required: true, audit: always, ast_reference: "AST08" }
+    - { classification: confidential, roles: [SecurityReviewer, AutoFixer, CodeReviewer, PipelineAdmin], audit: always }
+    - { classification: internal, roles: [any_verified], audit: on_failure }
+    - { classification: public, roles: [any], audit: never }
+  caller_verification: { method: signed_request, max_token_age_seconds: 300 }
+```
+
+```typescript
+interface DecompressionAuthorizationRequest {
+  caller_node_id: string;
+  target_node_id: string;
+  target_fields: string[];
+  data_classification: "restricted" | "confidential" | "internal" | "public";
+  authorization_token: string;
+  ast_reference: "AST08";
+}
+```
+
+```json
+{
+  "tool": "cortivex_compress",
+  "request": { "action": "decompress", "node_id": "security_scan", "fields": ["vulnerabilities.recommendation"],
+    "run_id": "ctx-a1b2c3", "caller_node_id": "pr_summary" },
+  "response": {
+    "status": "authorization_denied",
+    "reason": "AST08: Node 'pr_summary' (PRCreator) not authorized for confidential security findings",
+    "required_roles": ["SecurityReviewer", "AutoFixer", "CodeReviewer", "PipelineAdmin"],
+    "audit_entry_id": "audit-decomp-denied-9f3a"
+  }
+}
 ```

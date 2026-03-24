@@ -465,3 +465,252 @@ const consensus = new CortivexConsensus({
 ```
 
 The `heartbeat_interval_ms` must be significantly less than `base_timeout_ms` (recommended ratio: at least 1:3). Priority election biases leadership toward higher-priority nodes. Leader stickiness adds a timeout bonus to the current leader, reducing unnecessary re-elections from transient jitter.
+
+## Security Hardening (OWASP AST10 Aligned)
+
+This section defines security controls for Cortivex consensus operations, aligned with the OWASP Agentic Security Top 10 risk framework. Each subsection references the specific AST risk ID it mitigates.
+
+### AST06: Mandatory TLS for Inter-Node Communication
+
+All inter-node communication must use TLS 1.3 by default. Plaintext transport is disabled unless explicitly overridden with an acknowledgment flag, ensuring that no cluster can accidentally run unencrypted traffic between peers.
+
+```yaml
+# AST06 -- Enforce encrypted transport for all peer-to-peer consensus traffic
+orchestration:
+  mode: cluster
+  node_id: node-1
+  transport:
+    protocol: tls
+    tls_version: "1.3"
+    require_tls: true                        # AST06: reject plaintext connections
+    allow_plaintext_override: false           # AST06: disable escape hatch in production
+    certificate_path: /etc/cortivex/certs/node-1.crt
+    key_path: /etc/cortivex/certs/node-1.key
+    ca_bundle_path: /etc/cortivex/certs/ca.crt
+    mutual_tls: true                         # both sides present certificates
+    cipher_suites:
+      - TLS_AES_256_GCM_SHA384
+      - TLS_CHACHA20_POLY1305_SHA256
+    certificate_rotation:
+      enabled: true
+      check_interval_hours: 24
+      renew_before_expiry_days: 30
+```
+
+Verify TLS enforcement across the cluster with the MCP tool:
+
+```
+cortivex_cluster({
+  action: "security_audit",
+  checks: ["tls_enforcement", "certificate_validity", "cipher_strength"]
+})
+```
+
+### Node Authentication with ed25519 Signatures
+
+Every message exchanged between consensus nodes (heartbeats, vote requests, vote responses, log entries) must carry an ed25519 signature. Unsigned or incorrectly signed messages are dropped and logged as security events (AST06).
+
+```json
+{
+  "method": "cortivex_consensus_configure",
+  "params": {
+    "cluster_id": "prod-cluster-01",
+    "message_authentication": {
+      "enabled": true,
+      "signature_scheme": "ed25519",
+      "key_directory": "/etc/cortivex/keys/",
+      "require_signatures_on": [
+        "request_vote",
+        "vote_response",
+        "append_entries",
+        "heartbeat",
+        "membership_change"
+      ],
+      "reject_unsigned": true,
+      "signature_cache_ttl_seconds": 60,
+      "on_invalid_signature": "drop_and_alert"
+    }
+  }
+}
+```
+
+TypeScript key generation and verification interface:
+
+```typescript
+import { ConsensusAuth } from "@cortivex/consensus";
+
+// AST06: Generate per-node ed25519 keypair at provisioning time
+const auth = new ConsensusAuth({
+  nodeId: "node-1",
+  keyDirectory: "/etc/cortivex/keys/",
+  signatureScheme: "ed25519",
+});
+
+// Every outbound message is signed before transmission
+const signed = auth.signMessage({
+  type: "request_vote",
+  term: 5,
+  candidateId: "node-1",
+  lastLogIndex: 142,
+  lastLogTerm: 4,
+});
+
+// Every inbound message is verified before processing
+const verified = auth.verifyMessage(inboundMessage);
+if (!verified.valid) {
+  auth.reportSecurityEvent({
+    event: "invalid_signature",        // AST06 violation
+    sourceNode: inboundMessage.from,
+    detail: verified.reason,
+  });
+}
+```
+
+### Dynamic Membership Authorization
+
+New nodes joining the cluster must be explicitly approved by the current leader and a quorum of existing members. This prevents unauthorized nodes from influencing elections or receiving replicated state (AST06).
+
+```yaml
+# AST06 -- Membership changes require multi-party authorization
+orchestration:
+  membership:
+    authorization:
+      mode: quorum-approval               # AST06: no single-node can admit peers
+      required_approvals: majority         # floor(cluster_size / 2) + 1
+      approval_timeout_seconds: 300
+      auto_reject_on_timeout: true
+    node_identity:
+      verification: certificate            # verify joining node's TLS certificate
+      allowed_ca: /etc/cortivex/certs/ca.crt
+      fingerprint_pinning: true            # pin expected certificate fingerprints
+    audit:
+      log_membership_changes: true
+      log_rejected_joins: true
+      alert_on_unauthorized_join: true
+```
+
+```
+cortivex_cluster({
+  action: "approve_node",
+  node_id: "node-4",
+  node_certificate_fingerprint: "sha256:e3b0c44298fc...",
+  approved_by: "node-1"
+})
+```
+
+### Split-Brain Prevention with Fencing Tokens
+
+Fencing tokens prevent stale leaders from executing actions after a new leader has been elected. Every leadership epoch generates a monotonically increasing fencing token. All state-mutating operations must include a valid fencing token, and downstream systems reject tokens from previous terms (AST06).
+
+```json
+{
+  "fencing_token_policy": {
+    "enabled": true,
+    "token_source": "term_and_leader_id",
+    "monotonic_enforcement": "strict",
+    "validation": {
+      "require_on": ["task_assignment", "state_replication", "config_change"],
+      "reject_stale_tokens": true,
+      "stale_token_action": "reject_and_log"
+    },
+    "storage": {
+      "persist_last_seen_token": true,
+      "token_log_path": ".cortivex/raft/fencing.log"
+    }
+  }
+}
+```
+
+MCP tool to inspect fencing token state across the cluster:
+
+```
+cortivex_cluster({
+  action: "fencing_status",
+  checks: ["token_monotonicity", "stale_leader_detection"]
+})
+```
+
+Expected response:
+
+```json
+{
+  "current_term": 14,
+  "current_fencing_token": "ft-14-node1-a8f2",
+  "last_accepted_tokens": {
+    "node-1": "ft-14-node1-a8f2",
+    "node-2": "ft-14-node1-a8f2",
+    "node-3": "ft-14-node1-a8f2"
+  },
+  "stale_token_rejections_24h": 0,
+  "status": "all_nodes_synchronized"
+}
+```
+
+### Election Manipulation Protection
+
+Term monotonicity and vote deduplication prevent election manipulation attacks where a compromised node attempts to force repeated elections, cast duplicate votes, or reset terms to gain illegitimate leadership (AST06).
+
+```yaml
+# AST06 -- Election integrity controls
+consensus:
+  election_integrity:
+    term_monotonicity:
+      enforce: true                        # AST06: reject any message with term < current
+      on_term_regression: reject_and_alert # never accept a lower term
+    vote_deduplication:
+      enforce: true                        # AST06: one vote per node per term
+      track_votes_per_term: true
+      on_duplicate_vote: drop_and_log
+    candidate_validation:
+      require_log_up_to_date: true         # reject candidates with stale logs
+      require_valid_signature: true        # AST06: candidate must prove identity
+    rate_limiting:
+      max_elections_per_minute: 5          # prevent election storm attacks
+      cooldown_after_failed_election_ms: 3000
+    audit:
+      log_all_vote_requests: true
+      log_all_vote_responses: true
+      log_term_changes: true
+      alert_on_rapid_term_increment: true  # >3 term changes in 60s triggers alert
+```
+
+```json
+{
+  "$schema": "https://cortivex.io/schemas/election-security-event.json",
+  "type": "object",
+  "properties": {
+    "event_type": {
+      "enum": [
+        "term_regression_blocked",
+        "duplicate_vote_dropped",
+        "unsigned_vote_rejected",
+        "election_rate_limit_hit",
+        "stale_candidate_rejected"
+      ]
+    },
+    "term": { "type": "integer", "minimum": 0 },
+    "source_node": { "type": "string" },
+    "target_node": { "type": "string" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "detail": { "type": "string" },
+    "ast_risk_id": { "const": "AST06" }
+  },
+  "required": ["event_type", "term", "source_node", "timestamp", "ast_risk_id"]
+}
+```
+
+Security audit across all election integrity controls:
+
+```
+cortivex_cluster({
+  action: "security_audit",
+  scope: "election_integrity",
+  checks: [
+    "term_monotonicity_enforced",
+    "vote_deduplication_active",
+    "candidate_signature_verification",
+    "election_rate_limiting",
+    "fencing_token_synchronization"
+  ]
+})
+```
