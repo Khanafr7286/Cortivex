@@ -236,7 +236,7 @@ These five skills run silently in the background so agents don't step on each ot
     </tr>
     <tr>
       <td><strong>cortivex-consensus</strong></td>
-      <td>Quorum-based leader election for multi-node clusters. Manages terms, quorum, heartbeats, and automatic failover when the leader goes down. Covers split-brain prevention and includes configurations for 3, 5, and 7-node clusters. Advanced Capabilities: Byzantine fault tolerance, consensus protocol selection, dynamic quorum management, split-brain detection and recovery, and leader election optimization. 716 lines.</td>
+      <td>Skill-defined leader election protocol for multi-node clusters. Teaches agents terms, quorum, heartbeats, and failover semantics. Covers split-brain prevention and includes configurations for 3, 5, and 7-node clusters. Dashboard visualizes elections via SwarmSimulator. Advanced Capabilities: Byzantine fault tolerance configuration, consensus protocol selection, dynamic quorum management, split-brain detection and recovery, and leader election optimization. 716 lines.</td>
     </tr>
     <tr>
       <td><strong>cortivex-knowledge</strong></td>

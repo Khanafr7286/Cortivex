@@ -95,7 +95,7 @@ export class NodeRunner extends EventEmitter<NodeRunnerEvents> {
     nodeType: NodeType,
     context: NodeRunContext
   ): Promise<NodeExecutionResult> {
-    const model = context.model ?? nodeType.defaultModel;
+    const model = this.sanitizeModel(context.model ?? nodeType.defaultModel);
     const prompt = this.buildPrompt(node, nodeType, context);
 
     return new Promise<NodeExecutionResult>((resolve, reject) => {
@@ -107,18 +107,20 @@ export class NodeRunner extends EventEmitter<NodeRunnerEvents> {
         '--max-budget-usd', '2',
       ];
 
-      // Add allowedTools if specified
+      // Add allowedTools if specified (validate tool names)
       if (nodeType.tools.length > 0) {
-        args.push('--allowedTools', nodeType.tools.join(','));
+        const sanitizedTools = nodeType.tools.map(tool => this.sanitizeToolName(tool));
+        args.push('--allowedTools', sanitizedTools.join(','));
       }
 
       // Use stdin to pipe the prompt instead of -p flag.
       // Long prompts with special characters get mangled by Windows shell
       // when passed as command-line args with shell:true.
+      // Use shell:false to prevent command injection
       const child = spawn('claude', args, {
         cwd: context.targetDir,
         env: { ...process.env },
-        shell: true,
+        shell: false,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 
@@ -293,12 +295,13 @@ export class NodeRunner extends EventEmitter<NodeRunnerEvents> {
 
     // Use Claude CLI in non-streaming mode for light nodes
     return new Promise<NodeExecutionResult>((resolve, reject) => {
-      const args = ['--print', '--output-format', 'json', '--model', model];
+      const sanitizedModel = this.sanitizeModel(model);
+      const args = ['--print', '--output-format', 'json', '--model', sanitizedModel];
 
       const child = spawn('claude', args, {
         cwd: context.targetDir,
         env: { ...process.env },
-        shell: true,
+        shell: false,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 
@@ -545,6 +548,32 @@ export class NodeRunner extends EventEmitter<NodeRunnerEvents> {
     }
 
     return { executable, args };
+  }
+
+  private sanitizeModel(model: string): string {
+    // Validate model name against allowed patterns to prevent injection
+    const allowedModelPattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+    if (!allowedModelPattern.test(model)) {
+      throw new Error(`Invalid model name: ${model}. Model names must contain only alphanumeric characters, dots, underscores, and hyphens.`);
+    }
+    // 64 char limit is reasonable for model identifiers (e.g., "claude-opus-4-6-2026-03-24-trial")
+    if (model.length > 64) {
+      throw new Error(`Model name too long: ${model}. Maximum length is 64 characters.`);
+    }
+    return model;
+  }
+
+  private sanitizeToolName(tool: string): string {
+    // Validate tool name against allowed patterns to prevent injection
+    const allowedToolPattern = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
+    if (!allowedToolPattern.test(tool)) {
+      throw new Error(`Invalid tool name: ${tool}. Tool names must start with a letter and contain only alphanumeric characters, underscores, and hyphens.`);
+    }
+    // 32 char limit is reasonable for tool identifiers (e.g., "custom-async-file-processor-v2")
+    if (tool.length > 32) {
+      throw new Error(`Tool name too long: ${tool}. Maximum length is 32 characters.`);
+    }
+    return tool;
   }
 
   private handleStreamMessage(

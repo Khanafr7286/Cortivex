@@ -169,8 +169,9 @@ export class PipelineExecutor extends EventEmitter {
     }
     async executeNode(node, run, context, maxRetries) {
         const nodeState = run.nodes.find((n) => n.nodeId === node.id);
-        if (!nodeState)
-            return;
+        if (!nodeState) {
+            throw new Error(`Node state not found for node "${node.id}"`);
+        }
         const nodeType = nodeRegistry.get(node.type);
         const agentId = `${context.runId}-${node.id}`;
         this.emit('node:start', node.id, node.type);
@@ -210,8 +211,7 @@ export class PipelineExecutor extends EventEmitter {
                 nodeState.output = result.output;
                 nodeState.filesModified = result.filesModified;
                 if (filesToClaim.length > 0) {
-                    await this.mesh.release(agentId);
-                    this.emit('mesh:release', agentId);
+                    await this.releaseMeshClaimSafely(agentId);
                 }
                 this.emit('node:complete', node.id, nodeState);
                 return;
@@ -227,10 +227,22 @@ export class PipelineExecutor extends EventEmitter {
         nodeState.completedAt = new Date().toISOString();
         nodeState.error = lastError ?? 'Unknown error';
         if (filesToClaim.length > 0) {
+            await this.releaseMeshClaimSafely(agentId);
+        }
+        this.emit('node:failed', node.id, nodeState.error);
+    }
+    /**
+     * Safely releases a mesh claim, logging errors without failing the operation.
+     */
+    async releaseMeshClaimSafely(agentId) {
+        try {
             await this.mesh.release(agentId);
             this.emit('mesh:release', agentId);
         }
-        this.emit('node:failed', node.id, nodeState.error);
+        catch (releaseError) {
+            // Log release failures but don't fail the node execution
+            console.warn(`Failed to release mesh claim for agent "${agentId}":`, releaseError instanceof Error ? releaseError.message : releaseError);
+        }
     }
     /**
      * Resolves execution order from the DAG using topological sort.
@@ -249,6 +261,10 @@ export class PipelineExecutor extends EventEmitter {
         for (const node of nodes) {
             if (node.depends_on) {
                 for (const dep of node.depends_on) {
+                    // Validate that the dependency exists
+                    if (!nodeMap.has(dep)) {
+                        throw new Error(`Node "${node.id}" depends on non-existent node "${dep}"`);
+                    }
                     inDegree.set(node.id, (inDegree.get(node.id) ?? 0) + 1);
                     const depList = dependents.get(dep);
                     if (depList) {
@@ -310,6 +326,11 @@ export class PipelineExecutor extends EventEmitter {
         if (containsMatch) {
             const nodeId = containsMatch[1];
             const searchText = containsMatch[2];
+            // Limit search text length to prevent excessive string matching on large outputs
+            // 256 chars is a reasonable limit for condition matching while allowing flexible queries
+            if (searchText.length > 256) {
+                throw new Error(`Condition search text too long: maximum 256 characters`);
+            }
             const nodeState = run.nodes.find((n) => n.nodeId === nodeId);
             return nodeState?.output.includes(searchText) ?? false;
         }

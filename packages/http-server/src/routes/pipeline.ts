@@ -100,10 +100,39 @@ router.post('/run', async (req, res) => {
       });
     }
 
+    // Get runId immediately when pipeline starts
+    let runId: string = '';
+    let initialRun: PipelineRun | null = null;
+
+    executor.once('pipeline:start', (id, _pipelineName) => {
+      runId = id;
+      // Create initial run state for immediate tracking
+      initialRun = {
+        id: runId,
+        pipeline: pipelineDef.name,
+        status: 'running',
+        startedAt: new Date().toISOString(),
+        nodes: pipelineDef.nodes.map((n: any) => ({
+          nodeId: n.id,
+          status: 'pending',
+          progress: 0,
+          cost: 0,
+          tokens: 0,
+          output: '',
+          filesModified: [],
+        })),
+        totalCost: 0,
+        totalTokens: 0,
+        filesModified: [],
+      };
+      // Track immediately in activeRuns
+      activeRuns.set(runId, { run: initialRun, executor });
+    });
+
     // Start execution (don't await — return runId immediately)
     const runPromise = executor.execute(pipelineDef, options);
 
-    // Track it while it's running
+    // Track completion asynchronously
     runPromise.then((run) => {
       activeRuns.delete(run.id);
       completedRuns.push(run);
@@ -112,21 +141,36 @@ router.post('/run', async (req, res) => {
       }
       // Stop SWARM simulator when pipeline completes
       swarmSimulator.stop();
+    }).catch((error) => {
+      // Handle execution errors by moving failed run to completed
+      if (initialRun) {
+        initialRun.status = 'failed';
+        initialRun.completedAt = new Date().toISOString();
+        activeRuns.delete(initialRun.id);
+        completedRuns.push(initialRun);
+        if (completedRuns.length > MAX_COMPLETED) {
+          completedRuns.shift();
+        }
+      }
+      swarmSimulator.stop();
     });
 
-    // Get the runId from the promise
-    const run = await runPromise;
+    // Wait briefly for pipeline:start event to fire
+    await new Promise(resolve => setTimeout(resolve, 10));
 
+    if (!initialRun || !runId) {
+      throw new Error('Failed to initialize pipeline run');
+    }
+
+    const run = initialRun as PipelineRun;
     res.json({
-      runId: run.id,
+      runId: runId,
       pipeline: run.pipeline,
       status: run.status,
       totalCost: run.totalCost,
       totalTokens: run.totalTokens,
-      duration: run.completedAt
-        ? Date.parse(run.completedAt) - Date.parse(run.startedAt)
-        : null,
-      nodes: run.nodes.map((n) => ({
+      duration: null,
+      nodes: run.nodes.map((n: any) => ({
         nodeId: n.nodeId,
         status: n.status,
         cost: n.cost,

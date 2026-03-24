@@ -20,6 +20,10 @@ export declare class PipelineExecutor extends EventEmitter<ExecutorEvents> {
     execute(pipeline: PipelineDefinition, options?: ExecuteOptions): Promise<PipelineRun>;
     private executeNode;
     /**
+     * Safely releases a mesh claim, logging errors without failing the operation.
+     */
+    private releaseMeshClaimSafely;
+    /**
      * Resolves execution order from the DAG using topological sort.
      * Returns batches of nodes that can be executed in parallel.
      */

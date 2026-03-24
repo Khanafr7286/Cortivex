@@ -1,7 +1,14 @@
 import type { MeshClaim, MeshConflict, MeshState } from '../types.js';
 export declare class MeshManager {
     private readonly meshDir;
+    private readonly writeQueue;
+    private readonly QUEUE_CLEANUP_INTERVAL;
+    private cleanupTimer?;
     constructor(baseDir?: string);
+    /**
+     * Atomic write operation with queue-based race condition prevention.
+     */
+    private atomicWrite;
     /**
      * Claim files for an agent. Writes a JSON file atomically.
      */
@@ -31,6 +38,10 @@ export declare class MeshManager {
      * Get a specific agent's claim.
      */
     getClaim(agentId: string): Promise<MeshClaim | null>;
+    /**
+     * Clean up stale promises from writeQueue to prevent memory leaks
+     */
+    private cleanupStaleWrites;
     private ensureDir;
 }
 //# sourceMappingURL=manager.d.ts.map

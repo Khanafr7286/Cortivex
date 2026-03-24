@@ -1,0 +1,1 @@
+{"version":3,"file":"decompose.d.ts","sourceRoot":"","sources":["../../src/tools/decompose.ts"],"names":[],"mappings":"AAKA,MAAM,WAAW,cAAc;IAC7B,WAAW,EAAE,MAAM,CAAC;IACpB,QAAQ,CAAC,EAAE,MAAM,CAAC;CACnB;AAED,wBAAsB,aAAa,CAAC,KAAK,EAAE,cAAc,GAAG,OAAO,CAAC;IAAE,OAAO,EAAE,KAAK,CAAC;QAAE,IAAI,EAAE,MAAM,CAAC;QAAC,IAAI,EAAE,MAAM,CAAA;KAAE,CAAC,CAAA;CAAE,CAAC,CAsEtH"}

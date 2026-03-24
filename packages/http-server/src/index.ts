@@ -48,15 +48,19 @@ app.use((_req, res, next) => {
   next();
 });
 
-// TODO: Add rate limiting middleware (e.g., express-rate-limit)
-// import rateLimit from 'express-rate-limit';
-// const limiter = rateLimit({
-//   windowMs: 15 * 60 * 1000, // 15 minutes
-//   max: 100, // limit each IP to 100 requests per windowMs
-//   standardHeaders: true,
-//   legacyHeaders: false,
-// });
-// app.use('/api/', limiter);
+// Rate limiting to prevent DoS attacks
+import rateLimit from 'express-rate-limit';
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: 'Too many requests',
+    message: 'Rate limit exceeded. Please try again later.'
+  }
+});
+app.use('/api/', limiter);
 
 // Request logging
 app.use((req, _res, next) => {

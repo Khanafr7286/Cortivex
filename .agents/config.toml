@@ -116,6 +116,9 @@ enabled = true
 [profiles.dev]
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
+# WARNING: This profile has dangerous settings. Only use for development!
+# Ensure NODE_ENV=development and never use in production
+# Configuration validation will prevent this profile from being used in production
 
 [profiles.safe]
 approval_policy = "untrusted"

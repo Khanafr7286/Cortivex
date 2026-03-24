@@ -14,7 +14,7 @@ import {
 import { useCortivexStore } from '@/stores/cortivexStore';
 import { NodeCard, NodeCardMini, NODE_WIDTH, NODE_HEIGHT } from '@/components/NodeCard';
 import { ConnectionLine } from '@/components/ConnectionLine';
-import { nodeTypesByCategory, nodeTypeCatalog } from '@/lib/demo-data';
+import { nodeTypesByCategory, nodeTypeCatalog } from '@/lib/node-catalog';
 import {
   CATEGORY_COLORS,
   CATEGORY_LABELS,

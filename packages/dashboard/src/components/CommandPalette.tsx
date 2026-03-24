@@ -21,7 +21,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { useCortivexStore } from '@/stores/cortivexStore';
-import { nodeTypeCatalog } from '@/lib/demo-data';
+import { nodeTypeCatalog } from '@/lib/node-catalog';
 import type { ViewType } from '@/lib/types';
 
 const viewCommands: { id: ViewType; label: string; icon: typeof Workflow }[] = [

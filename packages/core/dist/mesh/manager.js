@@ -24,8 +24,65 @@ function sanitizeAgentId(agentId) {
 }
 export class MeshManager {
     meshDir;
+    writeQueue = new Map();
+    QUEUE_CLEANUP_INTERVAL = 30 * 1000; // 30 seconds
+    cleanupTimer;
     constructor(baseDir = process.cwd()) {
         this.meshDir = join(baseDir, CORTIVEX_DIR, MESH_DIR);
+        // Periodically clean up stale promises from writeQueue
+        this.cleanupTimer = setInterval(() => {
+            this.cleanupStaleWrites();
+        }, this.QUEUE_CLEANUP_INTERVAL);
+        // Allow process to exit even if cleanup timer is running
+        this.cleanupTimer.unref();
+    }
+    /**
+     * Atomic write operation with queue-based race condition prevention.
+     */
+    async atomicWrite(targetPath, data) {
+        // Queue writes to prevent race conditions
+        const existingWrite = this.writeQueue.get(targetPath);
+        const writePromise = (async () => {
+            if (existingWrite) {
+                await existingWrite.promise;
+            }
+            const tempPath = `${targetPath}.${randomUUID()}.tmp`;
+            try {
+                await writeFile(tempPath, data, 'utf-8');
+                await rename(tempPath, targetPath);
+            }
+            catch (error) {
+                // Clean up temp file on error
+                try {
+                    await unlink(tempPath);
+                }
+                catch (cleanupError) {
+                    // Log cleanup errors for debugging but don't fail the operation
+                    console.warn(`Failed to cleanup temp file ${tempPath}:`, cleanupError instanceof Error ? cleanupError.message : cleanupError);
+                }
+                // On Windows, rename may fail if target exists — retry once
+                if (error instanceof Error && error.code === 'EEXIST') {
+                    await unlink(targetPath).catch(() => { }); // Ignore errors
+                    await rename(tempPath, targetPath);
+                }
+                else {
+                    throw error;
+                }
+            }
+        })();
+        this.writeQueue.set(targetPath, { promise: writePromise, timestamp: Date.now() });
+        try {
+            await writePromise;
+            // Only delete from queue on successful completion
+            this.writeQueue.delete(targetPath);
+        }
+        catch (error) {
+            // Keep failed writes in queue briefly to prevent immediate retries
+            setTimeout(() => {
+                this.writeQueue.delete(targetPath);
+            }, 1000);
+            throw error;
+        }
     }
     /**
      * Claim files for an agent. Writes a JSON file atomically.
@@ -44,24 +101,10 @@ export class MeshManager {
             claimedAt: now,
             lastUpdate: now,
         };
-        // Atomic write: write to temp file then rename
+        // Atomic write with race condition protection
         const targetPath = join(this.meshDir, `${safeAgentId}.json`);
-        const tempPath = join(this.meshDir, `${safeAgentId}.${randomUUID()}.tmp`);
         const data = JSON.stringify(claim, null, 2);
-        await writeFile(tempPath, data, 'utf-8');
-        try {
-            await rename(tempPath, targetPath);
-        }
-        catch {
-            // On Windows, rename fails if target exists — remove then retry
-            try {
-                await unlink(targetPath);
-            }
-            catch {
-                // Target didn't exist, that's fine
-            }
-            await rename(tempPath, targetPath);
-        }
+        await this.atomicWrite(targetPath, data);
         return claim;
     }
     /**
@@ -207,7 +250,7 @@ export class MeshManager {
             const claim = JSON.parse(content);
             claim.status = status;
             claim.lastUpdate = new Date().toISOString();
-            await writeFile(filePath, JSON.stringify(claim, null, 2), 'utf-8');
+            await this.atomicWrite(filePath, JSON.stringify(claim, null, 2));
         }
         catch (error) {
             // Claim file may not exist if agent was already released
@@ -227,6 +270,18 @@ export class MeshManager {
         catch {
             // Claim file doesn't exist or is unreadable
             return null;
+        }
+    }
+    /**
+     * Clean up stale promises from writeQueue to prevent memory leaks
+     */
+    cleanupStaleWrites() {
+        const now = Date.now();
+        const staleThreshold = 2 * 60 * 1000; // 2 minutes
+        for (const [path, entry] of this.writeQueue.entries()) {
+            if (now - entry.timestamp > staleThreshold) {
+                this.writeQueue.delete(path);
+            }
         }
     }
     async ensureDir() {

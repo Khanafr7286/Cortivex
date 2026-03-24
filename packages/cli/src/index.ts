@@ -341,14 +341,56 @@ program
   .option('-p, --port <port>', 'Dashboard port (default: 4200)')
   .action(async (options: { port?: string }) => {
     const port = options.port ? parseInt(options.port, 10) : 4200;
+    const { spawn } = await import('node:child_process');
+    const { resolve, dirname } = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+
+    // Resolve dashboard directory relative to the CLI package
+    const cliDir = dirname(fileURLToPath(import.meta.url));
+    const dashboardDir = resolve(cliDir, '..', '..', 'dashboard');
+
     console.log('');
     console.log(
       chalk.bold.cyan(`  Starting Cortivex dashboard on port ${port}...`)
     );
-    console.log(
-      chalk.gray(`  Dashboard: http://localhost:${port}/`)
-    );
+
+    const vite = spawn('npx', ['vite', '--port', String(port), '--host'], {
+      cwd: dashboardDir,
+      stdio: 'pipe',
+      shell: true,
+    });
+
+    vite.stdout.on('data', (data: Buffer) => {
+      const line = data.toString().trim();
+      if (line.includes('Local:') || line.includes('ready in')) {
+        console.log(chalk.green(`  ${line}`));
+      }
+    });
+
+    vite.stderr.on('data', (data: Buffer) => {
+      const line = data.toString().trim();
+      if (line && !line.includes('ExperimentalWarning')) {
+        console.error(chalk.yellow(`  ${line}`));
+      }
+    });
+
+    vite.on('error', (err) => {
+      console.error(chalk.red(`  Failed to start dashboard: ${err.message}`));
+      console.log(chalk.gray('  Make sure the dashboard package is built: cd packages/dashboard && npm install'));
+      process.exit(1);
+    });
+
+    console.log(chalk.gray(`  Dashboard: http://localhost:${port}/`));
+    console.log(chalk.gray('  Press Ctrl+C to stop.'));
     console.log('');
+
+    // Keep process alive until Ctrl+C
+    process.on('SIGINT', () => {
+      vite.kill();
+      process.exit(0);
+    });
+
+    await new Promise(() => {});
   });
 
 // --- export ---

@@ -13,16 +13,7 @@ import type {
   NodeStatus,
   Suggestion,
 } from '@/lib/types';
-import {
-  demoPipelines,
-  demoHistory,
-  demoInsights,
-  demoMeshClaims,
-  demoMeshConflicts,
-  demoSuggestions,
-  createLiveExecution,
-  nodeTypeCatalog,
-} from '@/lib/demo-data';
+import { nodeTypeCatalog } from '@/lib/node-catalog';
 import {
   fetchPipelines as apiFetchPipelines,
   fetchMeshClaims as apiFetchMeshClaims,
@@ -65,7 +56,7 @@ export interface CortivexState {
   editorPipelineName: string;
 
   // Execution state
-  executionSimulation: ReturnType<typeof createLiveExecution> | null;
+  executionSimulation: { stop: () => void } | null;
   terminalOutput: { nodeId: string; lines: { type: string; text: string }[] }[];
   activeTerminalTab: string | null;
 
@@ -238,7 +229,7 @@ export const useCortivexStore = create<CortivexState>((set, get) => ({
       // Fetch all endpoints in parallel
       [pipelines, meshClaims, meshConflicts, insights, history] =
         await Promise.all([
-          apiFetchPipelines().catch(() => demoPipelines),
+          apiFetchPipelines().catch(() => [] as PipelineDefinition[]),
           apiFetchMeshClaims().catch(() => [] as MeshClaim[]),
           apiFetchMeshConflicts().catch(() => [] as MeshConflict[]),
           apiFetchInsights().catch(() => [] as Insight[]),
@@ -247,8 +238,8 @@ export const useCortivexStore = create<CortivexState>((set, get) => ({
       pipelines = normalizePipelines(pipelines);
       history = normalizeHistory(history);
     } else {
-      console.warn('[Cortivex] HTTP server offline — using template pipelines, empty live state');
-      pipelines = demoPipelines;
+      console.warn('[Cortivex] HTTP server offline. Start the server with: cortivex serve');
+      pipelines = [] as PipelineDefinition[];
       meshClaims = [] as MeshClaim[];
       meshConflicts = [] as MeshConflict[];
       insights = [] as Insight[];
@@ -281,8 +272,13 @@ export const useCortivexStore = create<CortivexState>((set, get) => ({
   // PIPELINE ACTIONS
   // ============================================
 
-  loadPipelines: () => {
-    set({ pipelines: demoPipelines });
+  loadPipelines: async () => {
+    try {
+      const pipelines = await apiFetchPipelines();
+      set({ pipelines });
+    } catch {
+      set({ pipelines: [] });
+    }
   },
 
   setActivePipeline: (pipeline) => {
@@ -472,88 +468,14 @@ export const useCortivexStore = create<CortivexState>((set, get) => ({
 
     stopExecution();
 
-    const sim = createLiveExecution(activeRun.nodes, {
-      onNodeStart: (nodeId) => {
-        set((state) => {
-          if (!state.activeRun) return state;
-          const nodes = state.activeRun.nodes.map((n) =>
-            n.id === nodeId ? { ...n, status: 'running' as NodeStatus, progress: 0 } : n,
-          );
-          return {
-            activeRun: { ...state.activeRun, nodes, currentNodeId: nodeId },
-            activeTerminalTab: state.activeTerminalTab || nodeId,
-          };
-        });
-        get().appendTerminalLine(nodeId, 'system', `--- Starting ${nodeId} ---`);
-      },
-      onNodeProgress: (nodeId, progress, line) => {
-        set((state) => {
-          if (!state.activeRun) return state;
-          const nodes = state.activeRun.nodes.map((n) =>
-            n.id === nodeId ? { ...n, progress } : n,
-          );
-          return { activeRun: { ...state.activeRun, nodes } };
-        });
-        if (line) {
-          get().appendTerminalLine(nodeId, line.type, line.text);
-        }
-      },
-      onNodeComplete: (nodeId, result) => {
-        set((state) => {
-          if (!state.activeRun) return state;
-          const nodes = state.activeRun.nodes.map((n) =>
-            n.id === nodeId
-              ? {
-                  ...n,
-                  status: 'completed' as NodeStatus,
-                  progress: 100,
-                  duration: result.duration,
-                  cost: result.cost,
-                  tokensUsed: result.tokens,
-                  filesModified: result.filesModified || [],
-                }
-              : n,
-          );
-          const totalCost = nodes.reduce((s, n) => s + n.cost, 0);
-          const totalTokens = nodes.reduce((s, n) => s + n.tokensUsed, 0);
-          return {
-            activeRun: { ...state.activeRun, nodes, totalCost, totalTokens },
-          };
-        });
-        get().appendTerminalLine(
-          nodeId,
-          'system',
-          `--- Completed (${result.duration.toFixed(1)}s, $${result.cost.toFixed(4)}) ---`,
-        );
-      },
-      onPipelineComplete: () => {
-        set((state) => {
-          if (!state.activeRun) return state;
-          const totalDuration =
-            (Date.now() - new Date(state.activeRun.startedAt).getTime()) / 1000;
-          return {
-            activeRun: {
-              ...state.activeRun,
-              status: 'completed',
-              completedAt: new Date().toISOString(),
-              totalDuration,
-              currentNodeId: null,
-            },
-            executionSimulation: null,
-          };
-        });
-      },
-    });
-
-    set({ executionSimulation: sim });
-    sim.start();
+    // Real execution events arrive via WebSocket (node:start, node:progress,
+    // node:complete, pipeline:complete). No client-side simulation needed.
+    // The App.tsx handleWSEvent dispatcher updates the store in real time.
+    set({ executionSimulation: { stop: () => {} } });
   },
 
   tickSimulation: () => {
-    const { executionSimulation } = get();
-    if (executionSimulation) {
-      executionSimulation.tick();
-    }
+    // No-op: real execution updates come via WebSocket events
   },
 
   // ============================================

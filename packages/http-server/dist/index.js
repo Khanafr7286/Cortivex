@@ -40,15 +40,21 @@ app.use((_req, res, next) => {
     res.setHeader('X-XSS-Protection', '1; mode=block');
     next();
 });
-// TODO: Add rate limiting middleware (e.g., express-rate-limit)
+// Rate limiting to prevent DoS attacks
+// TODO: Install express-rate-limit package: npm install express-rate-limit
 // import rateLimit from 'express-rate-limit';
 // const limiter = rateLimit({
 //   windowMs: 15 * 60 * 1000, // 15 minutes
 //   max: 100, // limit each IP to 100 requests per windowMs
 //   standardHeaders: true,
 //   legacyHeaders: false,
+//   message: {
+//     error: 'Too many requests',
+//     message: 'Rate limit exceeded. Please try again later.'
+//   }
 // });
 // app.use('/api/', limiter);
+console.warn('Rate limiting disabled. Install express-rate-limit for DoS protection: npm install express-rate-limit');
 // Request logging
 app.use((req, _res, next) => {
     const timestamp = new Date().toISOString();

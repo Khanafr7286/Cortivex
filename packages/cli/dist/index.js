@@ -179,10 +179,25 @@ program
     .action(async (options) => {
     const port = options.port ? parseInt(options.port, 10) : 3939;
     if (options.mcp) {
-        console.log(chalk.cyan('  Starting Cortivex MCP server on stdio...'));
-        // MCP server would read from stdin, write to stdout
-        // Placeholder — the full MCP implementation would go here
-        console.log(chalk.gray('  MCP server mode — awaiting requests'));
+        // Start the actual MCP server over stdio
+        const { fileURLToPath } = await import('node:url');
+        const { dirname, join: pathJoin } = await import('node:path');
+        const { spawn: spawnMcp } = await import('node:child_process');
+        const __filename = fileURLToPath(import.meta.url);
+        const mcpServerPath = pathJoin(dirname(__filename), '..', '..', '..', 'mcp-server', 'dist', 'index.js');
+        const child = spawnMcp('node', [mcpServerPath], {
+            stdio: ['inherit', 'inherit', 'inherit'],
+            env: { ...process.env },
+        });
+        child.on('error', (err) => {
+            console.error(chalk.red(`  Failed to start MCP server: ${err.message}`));
+            process.exit(1);
+        });
+        child.on('close', (code) => {
+            process.exit(code ?? 0);
+        });
+        // Keep parent alive until child exits
+        await new Promise(() => { });
     }
     else {
         console.log('');
@@ -434,5 +449,266 @@ function exportToN8nFormat(pipeline) {
         tags: ['cortivex'],
     };
 }
+// --- status ---
+program
+    .command('status [runId]')
+    .description('Show the status of a pipeline run')
+    .action(async (runId) => {
+    try {
+        const cwd = process.cwd();
+        const recorder = new HistoryRecorder(cwd);
+        const runs = await recorder.getRuns();
+        if (runs.length === 0) {
+            console.log('');
+            console.log(chalk.gray('  No pipeline runs found. Run a pipeline first with "cortivex run <pipeline>".'));
+            console.log('');
+            return;
+        }
+        const run = runId
+            ? runs.find((r) => r.id === runId || r.id.startsWith(runId))
+            : runs[0];
+        if (!run) {
+            console.log('');
+            console.log(chalk.red(`  Run "${runId}" not found.`));
+            console.log('');
+            process.exit(1);
+        }
+        const statusStr = run.success ? 'success' : 'failed';
+        const statusColor = run.success ? chalk.green : chalk.red;
+        console.log('');
+        console.log(chalk.bold.cyan('  Pipeline Run Status'));
+        console.log(chalk.gray('  ' + '\u2500'.repeat(50)));
+        console.log(`  Run ID:       ${chalk.white(run.id)}`);
+        console.log(`  Pipeline:     ${chalk.white(run.pipeline)}`);
+        console.log(`  Status:       ${statusColor(statusStr)}`);
+        console.log(`  Duration:     ${chalk.white(run.totalDuration.toFixed(1) + 's')}`);
+        console.log(`  Cost:         ${chalk.white('$' + run.totalCost.toFixed(3))}`);
+        console.log('');
+        if (run.nodeResults && run.nodeResults.length > 0) {
+            console.log(chalk.bold.cyan('  Node Outcomes'));
+            console.log(chalk.gray('  ' + '\u2500'.repeat(50)));
+            for (const result of run.nodeResults) {
+                const nodeStatusStr = result.success ? 'success' : 'failed';
+                const nodeStatusColor = result.success ? chalk.green : chalk.red;
+                console.log(`  ${nodeStatusColor('\u25cf')} ${chalk.white(result.nodeId)} ${chalk.gray('—')} ${nodeStatusColor(nodeStatusStr)} ${chalk.gray('(' + result.duration.toFixed(1) + 's, $' + result.cost.toFixed(3) + ')')}`);
+            }
+            console.log('');
+        }
+    }
+    catch (error) {
+        console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+        process.exit(1);
+    }
+});
+// --- stop ---
+program
+    .command('stop <runId>')
+    .description('Send a stop signal to a running pipeline')
+    .action(async (runId) => {
+    try {
+        const { writeFile, mkdir } = await import('node:fs/promises');
+        const { join } = await import('node:path');
+        const cwd = process.cwd();
+        // Verify the run exists in history
+        const recorder = new HistoryRecorder(cwd);
+        const run = await recorder.getRunById(runId);
+        if (!run) {
+            console.log('');
+            console.error(chalk.red(`  Error: No run found with ID "${runId}".`));
+            console.log('');
+            process.exit(1);
+        }
+        // Create the signals directory if it doesn't exist
+        const signalsDir = join(cwd, '.cortivex', 'signals');
+        await mkdir(signalsDir, { recursive: true });
+        // Write the stop signal file
+        const signalFile = join(signalsDir, `stop-${runId}.json`);
+        await writeFile(signalFile, JSON.stringify({ runId, signal: 'stop', timestamp: new Date().toISOString() }, null, 2), 'utf-8');
+        console.log('');
+        console.log(chalk.yellow(`  Stop signal sent to run "${runId}".`));
+        console.log(chalk.gray('  The pipeline will halt after the current node completes.'));
+        console.log('');
+    }
+    catch (error) {
+        console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+        process.exit(1);
+    }
+});
+// --- install-skills ---
+program
+    .command('install-skills')
+    .description('Install Cortivex skills into the current project')
+    .action(async () => {
+    try {
+        const { readdir, mkdir, copyFile } = await import('node:fs/promises');
+        const { join, dirname } = await import('node:path');
+        const { fileURLToPath } = await import('node:url');
+        const cwd = process.cwd();
+        const __filename = fileURLToPath(import.meta.url);
+        const packageRoot = join(dirname(__filename), '..', '..', '..');
+        const sourceDir = join(packageRoot, '.agents', 'skills');
+        const targetDir = join(cwd, '.agents', 'skills');
+        // Ensure target directory exists
+        await mkdir(targetDir, { recursive: true });
+        const entries = await readdir(sourceDir, { withFileTypes: true });
+        let count = 0;
+        for (const entry of entries) {
+            if (entry.isDirectory()) {
+                const skillSource = join(sourceDir, entry.name);
+                const skillTarget = join(targetDir, entry.name);
+                await mkdir(skillTarget, { recursive: true });
+                const files = await readdir(skillSource);
+                for (const file of files) {
+                    await copyFile(join(skillSource, file), join(skillTarget, file));
+                }
+                count++;
+            }
+        }
+        console.log('');
+        console.log(chalk.green(`  Installed ${count} skill(s) into .agents/skills/`));
+        console.log(chalk.gray('  Skills will activate automatically in Claude Code based on context.'));
+        console.log('');
+    }
+    catch (error) {
+        console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+        process.exit(1);
+    }
+});
+// --- setup-mcp ---
+program
+    .command('setup-mcp')
+    .description('Generate MCP server config for your AI tool')
+    .option('-t, --tool <tool>', 'Target tool (claude-desktop, cursor, windsurf, cline, vscode, continue, zed, jetbrains)')
+    .action(async (options) => {
+    const configs = {
+        'claude-desktop': {
+            name: 'Claude Desktop',
+            path: 'Windows: %APPDATA%\\Claude\\claude_desktop_config.json\nmacOS: ~/Library/Application Support/Claude/claude_desktop_config.json',
+            config: JSON.stringify({
+                mcpServers: {
+                    cortivex: {
+                        command: 'npx',
+                        args: ['-y', 'cortivex', 'serve', '--mcp'],
+                    },
+                },
+            }, null, 2),
+        },
+        'cursor': {
+            name: 'Cursor',
+            path: 'Settings > Features > MCP Servers > Add Server\nOr: .cursor/mcp.json',
+            config: JSON.stringify({
+                mcpServers: {
+                    cortivex: {
+                        command: 'npx',
+                        args: ['-y', 'cortivex', 'serve', '--mcp'],
+                    },
+                },
+            }, null, 2),
+        },
+        'windsurf': {
+            name: 'Windsurf',
+            path: 'Settings > MCP Servers > Add Custom Server',
+            config: JSON.stringify({
+                mcpServers: {
+                    cortivex: {
+                        command: 'npx',
+                        args: ['-y', 'cortivex', 'serve', '--mcp'],
+                        env: {},
+                    },
+                },
+            }, null, 2),
+        },
+        'cline': {
+            name: 'Cline',
+            path: 'Cline > MCP Servers > Configure > Advanced MCP Settings',
+            config: JSON.stringify({
+                mcpServers: {
+                    cortivex: {
+                        command: 'npx',
+                        args: ['-y', 'cortivex', 'serve', '--mcp'],
+                        disabled: false,
+                    },
+                },
+            }, null, 2),
+        },
+        'vscode': {
+            name: 'VS Code (GitHub Copilot)',
+            path: '.vscode/mcp.json (workspace) or User Settings',
+            config: JSON.stringify({
+                servers: {
+                    cortivex: {
+                        type: 'stdio',
+                        command: 'npx',
+                        args: ['-y', 'cortivex', 'serve', '--mcp'],
+                    },
+                },
+            }, null, 2),
+        },
+        'continue': {
+            name: 'Continue.dev',
+            path: '.continue/config.yaml or .continue/mcpServers/cortivex.yaml',
+            config: `mcpServers:\n  - name: cortivex\n    command: npx\n    args:\n      - "-y"\n      - cortivex\n      - serve\n      - "--mcp"`,
+        },
+        'zed': {
+            name: 'Zed',
+            path: 'Zed > Settings > Open Settings (settings.json)',
+            config: JSON.stringify({
+                context_servers: {
+                    cortivex: {
+                        command: {
+                            path: 'npx',
+                            args: ['-y', 'cortivex', 'serve', '--mcp'],
+                        },
+                        settings: {},
+                    },
+                },
+            }, null, 2),
+        },
+        'jetbrains': {
+            name: 'JetBrains / Amazon Q Developer',
+            path: '.amazonq/default.json (project) or ~/.aws/amazonq/default.json (global)',
+            config: JSON.stringify({
+                mcpServers: {
+                    cortivex: {
+                        command: 'npx',
+                        args: ['-y', 'cortivex', 'serve', '--mcp'],
+                    },
+                },
+            }, null, 2),
+        },
+    };
+    console.log('');
+    if (options.tool) {
+        const key = options.tool.toLowerCase();
+        const entry = configs[key];
+        if (!entry) {
+            console.log(chalk.red(`  Unknown tool: "${options.tool}"`));
+            console.log(chalk.gray(`  Available: ${Object.keys(configs).join(', ')}`));
+            console.log('');
+            process.exit(1);
+        }
+        console.log(chalk.bold.cyan(`  ${entry.name} MCP Configuration`));
+        console.log(chalk.gray('  ' + '\u2500'.repeat(50)));
+        console.log(chalk.gray(`  Config location: ${entry.path}`));
+        console.log('');
+        console.log(entry.config);
+        console.log('');
+    }
+    else {
+        console.log(chalk.bold.cyan('  Cortivex MCP Server Setup'));
+        console.log(chalk.gray('  ' + '\u2500'.repeat(50)));
+        console.log('');
+        console.log(chalk.white('  Supported tools:'));
+        console.log('');
+        for (const [key, entry] of Object.entries(configs)) {
+            console.log(`  ${chalk.green('\u25cf')} ${chalk.bold(entry.name)} ${chalk.gray(`(--tool ${key})`)}`);
+        }
+        console.log('');
+        console.log(chalk.gray('  Usage: cortivex setup-mcp --tool <name>'));
+        console.log(chalk.gray('  Example: cortivex setup-mcp --tool cursor'));
+        console.log(chalk.gray('  Docs: docs/mcp-integrations.md'));
+        console.log('');
+    }
+});
 program.parse();
 //# sourceMappingURL=index.js.map

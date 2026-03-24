@@ -23,6 +23,8 @@ export declare class NodeRunner extends EventEmitter<NodeRunnerEvents> {
     private buildPrompt;
     private sanitizeCommand;
     private parseCommand;
+    private sanitizeModel;
+    private sanitizeToolName;
     private handleStreamMessage;
 }
 interface NodeExecutionResult {
