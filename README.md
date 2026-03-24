@@ -36,7 +36,7 @@ Most Claude Code skills tell agents what to do. Cortivex teaches agents how to t
 
 > **Why the name?** Cortivex combines "cortex" (the thinking layer of the brain) and "vex" (the mesh that connects agents together). The cortex reasons. The vex coordinates. Together, they form an orchestration system where agents don't just execute instructions, they reason through decisions, avoid known mistakes, and handle ambiguity without human intervention.
 
-Every skill in this library is a 450-1,200 line operational manual. Not a thin wrapper. Not a checklist. Each one includes reasoning protocols that force step-by-step thinking before action, anti-pattern tables with WRONG/RIGHT code examples showing exactly what fails and why, grounding rules for when the situation is uncertain, and Advanced Capabilities sections with production-grade MCP tool examples, YAML configurations, and JSON schemas. Every skill also includes a Security Hardening section aligned to the OWASP Agentic Skills Top 10 (AST10) framework — covering permission manifests, audit trails, tamper detection, execution sandboxing, and data classification. The result is measurably better and demonstrably safer agent output.
+Every skill in this library is a 450-1,200 line operational manual. Not a thin wrapper. Not a checklist. Each one includes reasoning protocols that force step-by-step thinking before action, anti-pattern tables with WRONG/RIGHT code examples showing exactly what fails and why, grounding rules for when the situation is uncertain, and Advanced Capabilities sections with production-grade MCP tool examples, YAML configurations, and JSON schemas. Every skill also includes a Security Hardening section aligned to the OWASP AST10 framework, covering permission manifests, audit trails, tamper detection, execution sandboxing, and data classification. The result is measurably better and demonstrably safer agent output.
 
 Underneath, 15 production-grade skills power a complete multi-agent orchestration system: DAG-based pipelines that decompose complex tasks into parallel agent workflows, a filesystem-based mesh protocol that prevents agents from overwriting each other's work, a leader election protocol defined in skills and simulated in the dashboard for visualization, shared knowledge graphs with content-hash deduplication that prevent duplicate analysis across agents, and a self-learning engine that records execution metrics and applies confidence-scored optimizations automatically.
 
@@ -442,7 +442,7 @@ Six orchestration node types (SwarmCoordinator, AgentMonitor, ConsensusManager, 
 The Cortivex MCP server exposes 17 tools for programmatic access from any MCP-compatible AI tool.
 
 ```bash
-# Quick setup — generates the config for your tool
+# Quick setup -generates the config for your tool
 cortivex setup-mcp --tool cursor
 ```
 
@@ -569,7 +569,7 @@ Contributions are welcome in these areas: new agent node types, pipeline templat
 
 ## Security Hardening
 
-Every Cortivex skill includes a **Security Hardening (OWASP AST10 Aligned)** section — 3,560 lines of production-grade security controls mapped to the [OWASP Agentic Skills Top 10](https://github.com/kenhuangus/agentic-skills-top-10) risk framework.
+Every Cortivex skill includes a **Security Hardening (OWASP AST10 Aligned)** section with 3,560 lines of production-grade security controls mapped to the OWASP AST10 risk framework for agentic AI systems.
 
 ### Why This Matters
 
